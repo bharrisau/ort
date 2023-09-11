@@ -1,0 +1,15 @@
+[package]
+name = "ort-sys"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.63"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/pykeio/ort"
+keywords = [ "machine-learning", "ai", "ml" ]
+categories = [ "algorithms", "mathematics", "science" ]
+authors = [
+	"pyke.io <contact@pyke.io>",
+	"Nicolas Bigaouette <nbigaouette@gmail.com>"
+]
+
+[dependencies]
