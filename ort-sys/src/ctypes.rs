@@ -1,10 +1,9 @@
 #![allow(non_camel_case_types)]
-pub use std::os::raw::{c_double, c_float, c_int, c_long, c_longlong, c_schar, c_short, c_uchar, c_uint, c_ulong, c_ulonglong, c_ushort, c_void};
 
 #[cfg(target_os = "windows")]
-pub type c_char = std::os::raw::c_ushort;
+pub type sys_char = std::os::raw::c_ushort;
 #[cfg(not(target_os = "windows"))]
-pub type c_char = std::os::raw::c_char;
+pub type sys_char = std::os::raw::c_char;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub type size_t = usize;
