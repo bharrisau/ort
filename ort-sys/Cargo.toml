@@ -12,4 +12,12 @@ authors = [
 	"Nicolas Bigaouette <nbigaouette@gmail.com>"
 ]
 
+[features]
+default = [ "load-dynamic" ]
+
+load-dynamic = [ "libloading" ]
+
 [dependencies]
+thiserror = "1.0"
+once_cell = "1.18.0"
+libloading = { version = "0.7", optional = true }
