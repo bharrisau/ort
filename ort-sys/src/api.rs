@@ -1,17 +1,14 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::{
-	ffi::{CStr, CString},
-	ops::Deref
-};
+use std::{ffi::CStr, ops::Deref};
 
 use once_cell::sync::OnceCell;
 
-use crate::{error::Status, sys::*};
+use crate::sys::{OrtApi, OrtApiBase, ORT_API_VERSION};
 use crate::{Error, Result};
 
 #[derive(Debug)]
-struct ApiPtr {
+pub(crate) struct ApiPtr {
 	api_ptr: *const OrtApi,
 	version: u32,
 	version_str: &'static str,
@@ -119,83 +116,5 @@ impl ApiPtr {
 				Ok(ApiPtr { api_ptr, version, version_str })
 			}
 		}
-	}
-}
-
-macro_rules! onnx_call {
-	($api:expr, $call:ident($($n:expr),+ $(,)?)) => {
-		if let Some(f) = $api.$call {
-			unsafe {
-				let result = f($($n),+);
-
-				if result.is_null() {
-					Ok(())
-				} else {
-					// Generate the error from the OrtStatus and release it after
-					Err(Status::new(result, stringify!($call), std::panic::Location::caller()).into())
-				}
-			}
-		} else {
-			Err(Error::ApiUnavailable { call: stringify!($call) })
-		}
-	};
-    (@no_return $api:expr, $call:ident($($n:expr),+ $(,)?)) => {
-		if let Some(f) = $api.$call {
-			unsafe {
-				f($($n),+);
-                Ok(())
-			}
-		} else {
-			Err(Error::ApiUnavailable { call: stringify!($call) })
-		}
-	};
-    (@direct $api:expr, $call:ident($($n:expr),+ $(,)?)) => {
-		if let Some(f) = $api.$call {
-			unsafe {
-				Ok(f($($n),+))
-			}
-		} else {
-			Err(Error::ApiUnavailable { call: stringify!($call) })
-		}
-	};
-}
-
-#[repr(transparent)]
-pub struct Api {
-	api: &'static ApiPtr
-}
-
-impl Api {
-	pub fn get() -> Self {
-		Api { api: ApiPtr::get() }
-	}
-
-	pub fn status_get_code(&self, status: *const OrtStatus) -> OrtErrorCode {
-		onnx_call!(@direct self.api, GetErrorCode(status)).unwrap()
-	}
-
-	pub fn status_get_message<'a>(&self, status: *const OrtStatus) -> &'a str {
-		let ret = onnx_call!(@direct self.api, GetErrorMessage(status)).unwrap();
-		unsafe {
-			let ret = CStr::from_ptr(ret);
-			std::str::from_utf8_unchecked(ret.to_bytes())
-		}
-	}
-
-	pub fn status_release(&self, status: *mut OrtStatus) {
-		onnx_call!(@no_return self.api, ReleaseStatus(status)).unwrap();
-	}
-
-	pub fn env_create(&self, log_severity_level: OrtLoggingLevel, logid: &str) -> Result<*mut OrtEnv> {
-		let logid = CString::new(logid).unwrap();
-		let mut env_ptr: *mut OrtEnv = std::ptr::null_mut();
-
-		onnx_call!(self.api, CreateEnv(log_severity_level, logid.as_ptr(), &mut env_ptr))?;
-
-		Ok(env_ptr)
-	}
-
-	pub fn env_release(&self, env: *mut OrtEnv) {
-		onnx_call!(@no_return self.api, ReleaseEnv(env)).unwrap();
 	}
 }

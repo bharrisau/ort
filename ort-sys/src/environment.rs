@@ -1,7 +1,7 @@
-use std::sync::{Arc, RwLock, Weak};
+use std::ffi::CString;
 
-use crate::sys::{OrtEnv, OrtLoggingLevel};
-use crate::Api;
+use crate::sys::OrtEnv;
+use crate::{onnx_call, Api, Error, Result};
 
 pub enum EnvOptions<'a> {
 	Singleton,
@@ -22,52 +22,41 @@ pub enum LogLevel {
 	Fatal = crate::sys::OrtLoggingLevel_ORT_LOGGING_LEVEL_FATAL
 }
 
-static G_ENV: RwLock<Option<Weak<Environment>>> = RwLock::new(Option::None);
-
 #[derive(Debug)]
-struct Environment {
-	pub(crate) env: *mut OrtEnv
+#[repr(transparent)]
+pub struct EnvPtr {
+	ptr: *mut OrtEnv
 }
 
-unsafe impl Send for Environment {}
-unsafe impl Sync for Environment {}
+unsafe impl Send for EnvPtr {}
+// unsafe impl Sync for EnvPtr {}
 
-impl Environment {
-	pub fn get(options: EnvOptions) -> Arc<Self> {
-		let lock = G_ENV.read().unwrap();
+impl Api {
+	pub fn env_create(&self, log_severity_level: LogLevel, logid: &str) -> Result<EnvPtr> {
+		let logid = CString::new(logid).expect("invalid log identifier");
+		let mut env_ptr: *mut OrtEnv = std::ptr::null_mut();
 
-		if let Some(arc) = lock.as_ref().and_then(Weak::upgrade) {
-			return arc;
-		}
+		onnx_call!(self.api, CreateEnv(log_severity_level as _, logid.as_ptr(), &mut env_ptr))?;
 
-		drop(lock);
-		let mut lock = G_ENV.write().unwrap();
-
-		if let Some(arc) = lock.as_ref().and_then(Weak::upgrade) {
-			return arc;
-		}
-
-		let val = Self::create_env(options);
-		let ret = Arc::new(val);
-		*lock = Some(Arc::downgrade(&ret));
-		ret
+		Ok(env_ptr.into())
 	}
 
-	fn create_env(options: EnvOptions) -> Self {
-		let ptr = match options {
-			EnvOptions::Default(level, id) => Api::get().env_create(level as OrtLoggingLevel, id),
-			EnvOptions::Singleton => Api::get().env_create(LogLevel::Warning as OrtLoggingLevel, "default")
-		};
-
-		Self { env: ptr.unwrap() }
+	pub fn env_release(&self, env: &mut EnvPtr) {
+		if !env.ptr.is_null() {
+			onnx_call!(self.api, ReleaseEnv(env.ptr) -> ()).expect("unable to release OrtEnv");
+			env.ptr = std::ptr::null_mut();
+		}
 	}
 }
 
-impl Drop for Environment {
+impl From<*mut OrtEnv> for EnvPtr {
+	fn from(value: *mut OrtEnv) -> Self {
+		EnvPtr { ptr: value }
+	}
+}
+
+impl Drop for EnvPtr {
 	fn drop(&mut self) {
-		let mut lock = G_ENV.write().unwrap();
-		let _ = lock.take();
-
-		Api::get().env_release(self.env);
+		Api::get().env_release(self);
 	}
 }
