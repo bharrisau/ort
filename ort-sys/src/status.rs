@@ -3,34 +3,51 @@ use std::{ffi::CStr, panic::Location};
 use crate::{onnx_call, sys::OrtStatus, Api};
 
 impl Api {
+	/// Create an OrtStatus from a null terminated string
+	pub(crate) fn status_create(&self, code: ErrorCode, msg: impl AsRef<CStr>) -> Status {
+		let ptr = onnx_call!(self.api, CreateStatus(code.into(), msg.as_ref().as_ptr()) -> *mut OrtStatus).expect("unable to create OrtStatus");
+		Status::Custom { ptr }
+	}
+
+	/// Get OrtErrorCode from OrtStatus
 	pub fn status_get_code(&self, status: &Status) -> ErrorCode {
-		match status {
-			Status::Ok => ErrorCode::Ok,
-			Status::Fail { ptr, .. } => onnx_call!(self.api, GetErrorCode(*ptr) -> crate::sys::OrtErrorCode)
-				.expect("unable to get error code")
-				.into()
-		}
+		let ptr = match status {
+			Status::Ok => return ErrorCode::Ok,
+			Status::Custom { ptr } => ptr,
+			Status::Fail { ptr, .. } => ptr
+		};
+
+		onnx_call!(self.api, GetErrorCode(*ptr) -> crate::sys::OrtErrorCode)
+			.expect("unable to get error code")
+			.into()
 	}
 
+	/// Get error string from OrtStatus
 	pub fn status_get_message<'a>(&self, status: &Status) -> &'a str {
-		match status {
-			Status::Ok => "ok",
-			Status::Fail { ptr, .. } => {
-				let ret = onnx_call!(self.api, GetErrorMessage(*ptr) -> *const i8).expect("unable to get error message");
-				unsafe {
-					let ret = CStr::from_ptr(ret);
-					std::str::from_utf8_unchecked(ret.to_bytes())
-				}
-			}
+		let ptr = match status {
+			Status::Ok => return "ok",
+			Status::Custom { ptr } => ptr,
+			Status::Fail { ptr, .. } => ptr
+		};
+
+		let ret = onnx_call!(self.api, GetErrorMessage(*ptr) -> *const i8).expect("unable to get error message");
+		unsafe {
+			let ret = CStr::from_ptr(ret);
+			std::str::from_utf8_unchecked(ret.to_bytes())
 		}
 	}
 
-	pub fn status_release(&self, status: &mut Status) {
-		if let Status::Fail { ptr, .. } = status {
-			if !ptr.is_null() {
-				onnx_call!(self.api, ReleaseStatus(*ptr) -> ()).expect("unable to release OrtStatus");
-				*ptr = std::ptr::null_mut();
-			}
+	/// Release allocation for OrtStatus
+	pub(crate) fn status_release(&self, status: &mut Status) {
+		let ptr = match status {
+			Status::Ok => return,
+			Status::Custom { ptr } => ptr,
+			Status::Fail { ptr, .. } => ptr
+		};
+
+		if !ptr.is_null() {
+			onnx_call!(self.api, ReleaseStatus(*ptr) -> ()).expect("unable to release OrtStatus");
+			*ptr = std::ptr::null_mut();
 		}
 	}
 }
@@ -74,9 +91,18 @@ impl From<u32> for ErrorCode {
 	}
 }
 
+impl From<ErrorCode> for u32 {
+	fn from(val: ErrorCode) -> Self {
+		val as Self
+	}
+}
+
 #[derive(Debug)]
 pub enum Status {
 	Ok,
+	Custom {
+		ptr: *mut OrtStatus
+	},
 	Fail {
 		ptr: *mut OrtStatus,
 		call: &'static str,
@@ -85,7 +111,7 @@ pub enum Status {
 }
 
 impl Status {
-	pub fn new(ptr: *mut OrtStatus, call: &'static str, loc: &'static Location<'static>) -> Self {
+	pub(crate) fn new(ptr: *mut OrtStatus, call: &'static str, loc: &'static Location<'static>) -> Self {
 		Self::Fail { ptr, call, loc }
 	}
 	pub fn message(&self) -> &str {
@@ -101,6 +127,7 @@ impl std::fmt::Display for Status {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
 			Status::Ok => f.write_str("onnxruntime OK status"),
+			Status::Custom { .. } => f.write_fmt(format_args!("onnxruntime custom status. error code: {:?}, error message {}", self.code(), self.message())),
 			Status::Fail { call, loc, .. } => f.write_fmt(format_args!(
 				"onnxruntime error while calling {} at {}. error code: {:?}, error message {}",
 				call,
