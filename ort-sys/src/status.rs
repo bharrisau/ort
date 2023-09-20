@@ -1,4 +1,4 @@
-use std::{ffi::CStr, panic::Location};
+use std::ffi::CStr;
 
 use crate::{onnx_call, sys::OrtStatus, Api};
 
@@ -100,19 +100,13 @@ impl From<ErrorCode> for u32 {
 #[derive(Debug)]
 pub enum Status {
 	Ok,
-	Custom {
-		ptr: *mut OrtStatus
-	},
-	Fail {
-		ptr: *mut OrtStatus,
-		call: &'static str,
-		loc: &'static Location<'static>
-	}
+	Custom { ptr: *mut OrtStatus },
+	Fail { ptr: *mut OrtStatus, call: &'static str }
 }
 
 impl Status {
-	pub(crate) fn new(ptr: *mut OrtStatus, call: &'static str, loc: &'static Location<'static>) -> Self {
-		Self::Fail { ptr, call, loc }
+	pub(crate) fn new(ptr: *mut OrtStatus, call: &'static str) -> Self {
+		Self::Fail { ptr, call }
 	}
 	pub fn message(&self) -> &str {
 		Api::get().status_get_message(self)
@@ -128,13 +122,9 @@ impl std::fmt::Display for Status {
 		match self {
 			Status::Ok => f.write_str("onnxruntime OK status"),
 			Status::Custom { .. } => f.write_fmt(format_args!("onnxruntime custom status. error code: {:?}, error message {}", self.code(), self.message())),
-			Status::Fail { call, loc, .. } => f.write_fmt(format_args!(
-				"onnxruntime error while calling {} at {}. error code: {:?}, error message {}",
-				call,
-				loc,
-				self.code(),
-				self.message()
-			))
+			Status::Fail { call, .. } => {
+				f.write_fmt(format_args!("onnxruntime error while calling {}. error code: {:?}, error message {}", call, self.code(), self.message()))
+			}
 		}
 	}
 }

@@ -1,3 +1,7 @@
+use crate::{onnx_call, Api, Result};
+
+impl Api {}
+
 // pub CreateSession: ::std::option::Option<
 //     crate::ctypes::_system!(
 //         unsafe fn(env: *const OrtEnv, model_path: *const ORTCHAR_T, options: *const OrtSessionOptions, out: *mut *mut
@@ -127,3 +131,71 @@
 // *mut OrtIoBinding))>,
 //, pub SessionGetProfilingStartTimeNs:
 // ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, out: *mut u64) -> OrtStatusPtr)>,
+
+// OrtStatus * 	CreateSession (const OrtEnv *env, const char *model_path, const OrtSessionOptions *options, OrtSession
+// **out)  	Create an OrtSession from a model file.
+
+// OrtStatus * 	CreateSessionFromArray (const OrtEnv *env, const void *model_data, size_t model_data_length, const
+// OrtSessionOptions *options, OrtSession **out)  	Create an OrtSession from memory.
+
+// OrtStatus * 	Run (OrtSession *session, const OrtRunOptions *run_options, const char *const *input_names, const
+// OrtValue *const *inputs, size_t input_len, const char *const *output_names, size_t output_names_len, OrtValue
+// **outputs)  	Run the model in an OrtSession.
+
+// OrtStatus * 	SessionGetInputCount (const OrtSession *session, size_t *out)
+//  	Get input count for a session.
+
+// OrtStatus * 	SessionGetOutputCount (const OrtSession *session, size_t *out)
+//  	Get output count for a session.
+
+// OrtStatus * 	SessionGetOverridableInitializerCount (const OrtSession *session, size_t *out)
+//  	Get overridable initializer count.
+
+// OrtStatus * 	SessionGetInputTypeInfo (const OrtSession *session, size_t index, OrtTypeInfo **type_info)
+//  	Get input type information.
+
+// OrtStatus * 	SessionGetOutputTypeInfo (const OrtSession *session, size_t index, OrtTypeInfo **type_info)
+//  	Get output type information.
+
+// OrtStatus * 	SessionGetOverridableInitializerTypeInfo (const OrtSession *session, size_t index, OrtTypeInfo
+// **type_info)  	Get overridable initializer type information.
+
+// OrtStatus * 	SessionGetInputName (const OrtSession *session, size_t index, OrtAllocator *allocator, char **value)
+//  	Get input name.
+
+// OrtStatus * 	SessionGetOutputName (const OrtSession *session, size_t index, OrtAllocator *allocator, char **value)
+//  	Get output name.
+
+// OrtStatus * 	SessionGetOverridableInitializerName (const OrtSession *session, size_t index, OrtAllocator *allocator,
+// char **value)  	Get overridable initializer name.
+
+// void 	ReleaseSession (OrtSession *input)
+
+// OrtStatus * 	SessionEndProfiling (OrtSession *session, OrtAllocator *allocator, char **out)
+//  	End profiling and return filename of the profile data.
+
+// OrtStatus * 	SessionGetModelMetadata (const OrtSession *session, OrtModelMetadata **out)
+//  	Get OrtModelMetadata from an OrtSession.
+
+// OrtStatus * 	RunWithBinding (OrtSession *session, const OrtRunOptions *run_options, const OrtIoBinding *binding_ptr)
+//  	Run a model using Io Bindings for the inputs & outputs.
+
+// OrtStatus * 	CreateIoBinding (OrtSession *session, OrtIoBinding **out)
+//  	Create an OrtIoBinding instance.
+
+// OrtStatus * 	SessionGetProfilingStartTimeNs (const OrtSession *session, uint64_t *out)
+//  	Return the time that profiling was started.
+
+// OrtStatus * 	CreateSessionWithPrepackedWeightsContainer (const OrtEnv *env, const char *model_path, const
+// OrtSessionOptions *options, OrtPrepackedWeightsContainer *prepacked_weights_container, OrtSession **out)
+//  	Create session with prepacked weights container.
+
+// OrtStatus * 	CreateSessionFromArrayWithPrepackedWeightsContainer (const OrtEnv *env, const void *model_data, size_t
+// model_data_length, const OrtSessionOptions *options, OrtPrepackedWeightsContainer *prepacked_weights_container,
+// OrtSession **out)  	Create session from memory with prepacked weights container.
+
+// OrtStatus * 	CreatePrepackedWeightsContainer (OrtPrepackedWeightsContainer **out)
+//  	Create an OrtPrepackedWeightsContainer.
+
+// void 	ReleasePrepackedWeightsContainer (OrtPrepackedWeightsContainer *input)
+//  	Release OrtPrepackedWeightsContainer instance.

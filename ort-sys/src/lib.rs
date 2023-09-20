@@ -10,24 +10,40 @@ mod sys;
 mod api;
 mod logger;
 mod status;
+mod string;
 
+mod allocator;
 mod environment;
+mod io_binding;
+mod kernel;
+mod memory_info;
+mod run_options;
+mod session;
+mod session_options;
+mod tensor;
+mod value;
 
 use std::ffi::{c_char, CStr};
 
 use api::ApiPtr;
 pub use error::{Error, Result};
+pub use logger::{LogLevel, Logger};
 pub use status::Status;
 
 #[repr(transparent)]
 pub struct Api {
-	pub(crate) api: &'static ApiPtr
+	api: &'static ApiPtr
 }
 
 impl Api {
 	/// Get the onnxruntime API
 	pub fn get() -> Self {
 		Api { api: ApiPtr::get() }
+	}
+
+	/// Get the onnxruntime API internal pointer
+	pub(crate) fn get_ptr() -> &'static ApiPtr {
+		Self::get().api
 	}
 
 	/// Tries to get the onnxruntime for a specific version.
@@ -63,6 +79,7 @@ impl Api {
 	}
 
 	/// Release data from Api::get_available_providers
+	/// This API will never fail so you can rely on it in a noexcept code.
 	pub(crate) fn release_available_providers(&self, value: &mut Providers) {
 		if !value.ptr.is_null() {
 			let len = value.len.try_into().expect("unable to convert provider length");
@@ -70,31 +87,23 @@ impl Api {
 			value.ptr = std::ptr::null_mut();
 		}
 	}
+
+	/// Set current GPU device ID.
+	pub fn set_current_gpu_device_id(&self, id: i32) -> Result<()> {
+		onnx_call!(self.api, SetCurrentGpuDeviceId(id))
+	}
+
+	/// Get current GPU device ID.
+	pub fn get_current_gpu_device_id(&self) -> Result<i32> {
+		let mut id = 0;
+		onnx_call!(self.api, GetCurrentGpuDeviceId(&mut id))?;
+		Ok(id)
+	}
 }
 
 pub struct Providers {
 	ptr: *mut *mut ::std::os::raw::c_char,
 	len: usize
-}
-
-pub struct ProvidersIterator<'a> {
-	slice: &'a [*mut ::std::os::raw::c_char]
-}
-
-impl<'a> Iterator for ProvidersIterator<'a> {
-	type Item = &'a str;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		if let Some((value, rest)) = self.slice.split_first() {
-			self.slice = rest;
-			unsafe {
-				let ret = CStr::from_ptr(*value);
-				Some(std::str::from_utf8_unchecked(ret.to_bytes()))
-			}
-		} else {
-			None
-		}
-	}
 }
 
 impl<'a> IntoIterator for &'a Providers {
@@ -115,6 +124,25 @@ impl Drop for Providers {
 		Api::get().release_available_providers(self);
 	}
 }
+pub struct ProvidersIterator<'a> {
+	slice: &'a [*mut ::std::os::raw::c_char]
+}
+
+impl<'a> Iterator for ProvidersIterator<'a> {
+	type Item = &'a str;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		if let Some((value, rest)) = self.slice.split_first() {
+			self.slice = rest;
+			unsafe {
+				let ret = CStr::from_ptr(*value);
+				Some(std::str::from_utf8_unchecked(ret.to_bytes()))
+			}
+		} else {
+			None
+		}
+	}
+}
 
 macro_rules! onnx_call {
 	($api:expr, $call:ident($($n:expr),* $(,)?)) => {
@@ -125,11 +153,11 @@ macro_rules! onnx_call {
 				if result.is_null() {
 					Ok(())
 				} else {
-					Err(crate::status::Status::new(result, stringify!($call), std::panic::Location::caller()).into())
+					Err(crate::Status::new(result, stringify!($call)).into())
 				}
 			}
 		} else {
-			Err(Error::ApiUnavailable { call: stringify!($call) })
+			Err(crate::Error::ApiUnavailable { call: stringify!($call) })
 		}
 	};
     ($api:expr, $call:ident($($n:expr),* $(,)?) -> $ret:ty) => {
@@ -144,273 +172,144 @@ macro_rules! onnx_call {
 
 pub(crate) use onnx_call;
 
-// pub ModelMetadataGetCustomMetadataMapKeys: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             model_metadata: *const OrtModelMetadata,
-//             allocator: *mut OrtAllocator,
-//             keys: *mut *mut *mut ::std::os::raw::c_char,
-//             num_keys: *mut i64
-//         ) -> OrtStatusPtr
-//     )
-// >,
+// OrtStatus * 	GetExecutionProviderApi (const char *provider_name, uint32_t version, const void **provider_api)
+//  	Get a pointer to the requested version of the Execution Provider specific API extensions to the OrtApi.
 
-// pub ModelMetadataGetGraphDescription: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(model_metadata: *const OrtModelMetadata, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub SessionOptionsAppendExecutionProvider_TensorRT: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, tensorrt_options: *const
-// OrtTensorRTProviderOptions) -> OrtStatusPtr) >,
-// pub SetCurrentGpuDeviceId: ::std::option::Option<crate::ctypes::_system!(unsafe fn(device_id: ::std::os::raw::c_int)
-// -> OrtStatusPtr)>, pub GetCurrentGpuDeviceId: ::std::option::Option<crate::ctypes::_system!(unsafe fn(device_id: *mut
-// ::std::os::raw::c_int) -> OrtStatusPtr)>, pub KernelInfoGetAttributeArray_float: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, name: *const ::std::os::raw::c_char, out: *mut f32,
-// size: *mut size_t) -> OrtStatusPtr) >,
-// pub KernelInfoGetAttributeArray_int64: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, name: *const ::std::os::raw::c_char, out: *mut i64,
-// size: *mut size_t) -> OrtStatusPtr) >,
+// const OrtTrainingApi *(* 	GetTrainingApi )(uint32_t version)
+//  	Gets the Training C Api struct.
 
-// pub KernelContext_GetGPUComputeStream:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(context: *const OrtKernelContext, out: *mut *mut
-// ::std::os::raw::c_void) -> OrtStatusPtr)>, pub GetTensorMemoryInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(value: *const OrtValue, mem_info: *mut *const
-// OrtMemoryInfo) -> OrtStatusPtr)>, pub GetExecutionProviderApi: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(provider_name: *const ::std::os::raw::c_char, version: u32, provider_api: *mut *const
-// ::std::os::raw::c_void) -> OrtStatusPtr     )
-// >,
-// pub SessionOptionsSetCustomCreateThreadFn: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, ort_custom_create_thread_fn:
-// OrtCustomCreateThreadFn) -> OrtStatusPtr) >,
-// pub SessionOptionsSetCustomThreadCreationOptions: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, ort_custom_thread_creation_options: *mut
-// ::std::os::raw::c_void) -> OrtStatusPtr) >,
-// pub SessionOptionsSetCustomJoinThreadFn: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, ort_custom_join_thread_fn:
-// OrtCustomJoinThreadFn) -> OrtStatusPtr) >,
+// void(* 	ReleaseCANNProviderOptions )(OrtCANNProviderOptions *input)
+//  	Release an OrtCANNProviderOptions.
 
-// pub SynchronizeBoundInputs: ::std::option::Option<crate::ctypes::_system!(unsafe fn(binding_ptr: *mut OrtIoBinding)
-// -> OrtStatusPtr)>, pub SynchronizeBoundOutputs: ::std::option::Option<crate::ctypes::_system!(unsafe fn(binding_ptr:
-// *mut OrtIoBinding) -> OrtStatusPtr)>, pub SessionOptionsAppendExecutionProvider_CUDA_V2: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, cuda_options: *const OrtCUDAProviderOptionsV2)
-// -> OrtStatusPtr) >,
-// pub CreateCUDAProviderOptions: ::std::option::Option<crate::ctypes::_system!(unsafe fn(out: *mut *mut
-// OrtCUDAProviderOptionsV2) -> OrtStatusPtr)>, pub UpdateCUDAProviderOptions: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             cuda_options: *mut OrtCUDAProviderOptionsV2,
-//             provider_options_keys: *const *const ::std::os::raw::c_char,
-//             provider_options_values: *const *const ::std::os::raw::c_char,
-//             num_keys: size_t
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub GetCUDAProviderOptionsAsString: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(cuda_options: *const OrtCUDAProviderOptionsV2, allocator: *mut OrtAllocator, ptr: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// #[doc = " \\brief Release an ::OrtCUDAProviderOptionsV2\n\n \\note This is an exception in the naming convention of
-// other Release* functions, as the name of the method does not have the V2 suffix, but the type does\n\n \\since
-// Version 1.11."] pub ReleaseCUDAProviderOptions: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut
-// OrtCUDAProviderOptionsV2))>, pub SessionOptionsAppendExecutionProvider_MIGraphX: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, migraphx_options: *const
-// OrtMIGraphXProviderOptions) -> OrtStatusPtr) >,
-// pub AddExternalInitializers: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             options: *mut OrtSessionOptions,
-//             initializer_names: *const *const ::std::os::raw::c_char,
-//             initializers: *const *const OrtValue,
-//             initializers_num: size_t
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub CreateOpAttr: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             name: *const ::std::os::raw::c_char,
-//             data: *const ::std::os::raw::c_void,
-//             len: ::std::os::raw::c_int,
-//             type_: OrtOpAttrType,
-//             op_attr: *mut *mut OrtOpAttr
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub ReleaseOpAttr: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut OrtOpAttr))>,
-// pub CreateOp: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             info: *const OrtKernelInfo,
-//             op_name: *const ::std::os::raw::c_char,
-//             domain: *const ::std::os::raw::c_char,
-//             version: ::std::os::raw::c_int,
-//             type_constraint_names: *mut *const ::std::os::raw::c_char,
-//             type_constraint_values: *const ONNXTensorElementDataType,
-//             type_constraint_count: ::std::os::raw::c_int,
-//             attr_values: *const *const OrtOpAttr,
-//             attr_count: ::std::os::raw::c_int,
-//             input_count: ::std::os::raw::c_int,
-//             output_count: ::std::os::raw::c_int,
-//             ort_op: *mut *mut OrtOp
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub InvokeOp: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             context: *const OrtKernelContext,
-//             ort_op: *const OrtOp,
-//             input_values: *const *const OrtValue,
-//             input_count: ::std::os::raw::c_int,
-//             output_values: *const *mut OrtValue,
-//             output_count: ::std::os::raw::c_int
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub ReleaseOp: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut OrtOp))>,
-// pub SessionOptionsAppendExecutionProvider: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             options: *mut OrtSessionOptions,
-//             provider_name: *const ::std::os::raw::c_char,
-//             provider_options_keys: *const *const ::std::os::raw::c_char,
-//             provider_options_values: *const *const ::std::os::raw::c_char,
-//             num_keys: size_t
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub CopyKernelInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, info_copy: *mut *mut
-// OrtKernelInfo) -> OrtStatusPtr)>, pub ReleaseKernelInfo: ::std::option::Option<crate::ctypes::_system!(unsafe
-// fn(input: *mut OrtKernelInfo))>, #[doc = " \\name Ort Training\n @{\n** \\brief Gets the Training C Api struct\n*\n*
-// Call this function to access the ::OrtTrainingApi structure that holds pointers to functions that enable\n* training
-// with onnxruntime.\n* \\note A NULL pointer will be returned and no error message will be printed if the training
-// api\n* is not supported with this build. A NULL pointer will be returned and an error message will be\n* printed if
-// the provided version is unsupported, for example when using a runtime older than the\n* version created with this
-// header file.\n*\n* \\param[in] version Must be ::ORT_API_VERSION\n* \\return The ::OrtTrainingApi struct for the
-// version requested.\n*\n* \\since Version 1.13\n*/"] pub GetTrainingApi:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(version: u32) -> *const OrtTrainingApi)>,
-// pub SessionOptionsAppendExecutionProvider_CANN:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, cann_options: *const
-// OrtCANNProviderOptions) -> OrtStatusPtr)>, pub CreateCANNProviderOptions:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(out: *mut *mut OrtCANNProviderOptions) -> OrtStatusPtr)>, pub
-// UpdateCANNProviderOptions: ::std::option::Option<     crate::ctypes::_system!(
-//         unsafe fn(
-//             cann_options: *mut OrtCANNProviderOptions,
-//             provider_options_keys: *const *const ::std::os::raw::c_char,
-//             provider_options_values: *const *const ::std::os::raw::c_char,
-//             num_keys: size_t
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub GetCANNProviderOptionsAsString: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(cann_options: *const OrtCANNProviderOptions, allocator: *mut OrtAllocator, ptr: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// #[doc = " \\brief Release an OrtCANNProviderOptions\n\n \\param[in] the pointer of OrtCANNProviderOptions which will
-// been deleted\n\n \\since Version 1.13."] pub ReleaseCANNProviderOptions:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut OrtCANNProviderOptions))>,
-// pub MemoryInfoGetDeviceType: ::std::option::Option<crate::ctypes::_system!(unsafe fn(ptr: *const OrtMemoryInfo, out:
-// *mut OrtMemoryInfoDeviceType))>, pub UpdateEnvWithCustomLogLevel:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(ort_env: *mut OrtEnv, log_severity_level:
-// OrtLoggingLevel) -> OrtStatusPtr)>,
-// pub RegisterCustomOpsLibrary_V2:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, library_name: *const
-// ORTCHAR_T) -> OrtStatusPtr)>, pub RegisterCustomOpsUsingFunction: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, registration_func_name: *const
-// ::std::os::raw::c_char) -> OrtStatusPtr) >,
-// pub KernelInfo_GetInputCount: ::std::option::Option<crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo,
-// out: *mut size_t) -> OrtStatusPtr)>, pub KernelInfo_GetOutputCount:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, out: *mut size_t) ->
-// OrtStatusPtr)>, pub KernelInfo_GetInputName: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, index: size_t, out: *mut ::std::os::raw::c_char,
-// size: *mut size_t) -> OrtStatusPtr) >,
-// pub KernelInfo_GetOutputName: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, index: size_t, out: *mut ::std::os::raw::c_char,
-// size: *mut size_t) -> OrtStatusPtr) >,
-// pub KernelInfo_GetInputTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, index: size_t, type_info:
-// *mut *mut OrtTypeInfo) -> OrtStatusPtr)>, pub KernelInfo_GetOutputTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, index: size_t, type_info:
-// *mut *mut OrtTypeInfo) -> OrtStatusPtr)>, pub KernelInfoGetAttribute_tensor: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(info: *const OrtKernelInfo, name: *const ::std::os::raw::c_char, allocator: *mut OrtAllocator, out:
-// *mut *mut OrtValue) -> OrtStatusPtr     )
-// >,
-// pub HasSessionConfigEntry: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(options: *const OrtSessionOptions, config_key: *const ::std::os::raw::c_char, out: *mut
-// ::std::os::raw::c_int) -> OrtStatusPtr     )
-// >,
-// pub GetSessionConfigEntry: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             options: *const OrtSessionOptions,
-//             config_key: *const ::std::os::raw::c_char,
-//             config_value: *mut ::std::os::raw::c_char,
-//             size: *mut size_t
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub SessionOptionsAppendExecutionProvider_Dnnl:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(options: *mut OrtSessionOptions, dnnl_options: *const
-// OrtDnnlProviderOptions) -> OrtStatusPtr)>, pub CreateDnnlProviderOptions:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(out: *mut *mut OrtDnnlProviderOptions) -> OrtStatusPtr)>, pub
-// UpdateDnnlProviderOptions: ::std::option::Option<     crate::ctypes::_system!(
-//         unsafe fn(
-//             dnnl_options: *mut OrtDnnlProviderOptions,
-//             provider_options_keys: *const *const ::std::os::raw::c_char,
-//             provider_options_values: *const *const ::std::os::raw::c_char,
-//             num_keys: size_t
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub GetDnnlProviderOptionsAsString: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(dnnl_options: *const OrtDnnlProviderOptions, allocator: *mut OrtAllocator, ptr: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// #[doc = " \\brief Release an ::OrtDnnlProviderOptions\n\n \\since Version 1.15."]
-// pub ReleaseDnnlProviderOptions: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut
-// OrtDnnlProviderOptions))>, pub KernelInfo_GetNodeName: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, out: *mut ::std::os::raw::c_char, size: *mut
-// size_t) -> OrtStatusPtr) >,
-// pub KernelInfo_GetLogger:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(info: *const OrtKernelInfo, logger: *mut *const
-// OrtLogger) -> OrtStatusPtr)>, pub KernelContext_GetLogger:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(context: *const OrtKernelContext, logger: *mut *const
-// OrtLogger) -> OrtStatusPtr)>, pub Logger_LogMessage: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             logger: *const OrtLogger,
-//             log_severity_level: OrtLoggingLevel,
-//             message: *const ::std::os::raw::c_char,
-//             file_path: *const ORTCHAR_T,
-//             line_number: ::std::os::raw::c_int,
-//             func_name: *const ::std::os::raw::c_char
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub Logger_GetLoggingSeverityLevel:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(logger: *const OrtLogger, out: *mut OrtLoggingLevel) ->
-// OrtStatusPtr)>, pub KernelInfoGetConstantInput_tensor: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(info: *const OrtKernelInfo, index: size_t, is_constant: *mut ::std::os::raw::c_int, out: *mut
-// *const OrtValue) -> OrtStatusPtr     )
-// >,
-// pub CastTypeInfoToOptionalTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(type_info: *const OrtTypeInfo, out: *mut *const
-// OrtOptionalTypeInfo) -> OrtStatusPtr)>, pub GetOptionalContainedTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(optional_type_info: *const OrtOptionalTypeInfo, out: *mut
-// *mut OrtTypeInfo) -> OrtStatusPtr)>, pub GetResizedStringTensorElementBuffer: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(value: *mut OrtValue, index: size_t, length_in_bytes: size_t, buffer: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub KernelContext_GetAllocator: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(context: *const OrtKernelContext, mem_info: *const OrtMemoryInfo, out: *mut
-// *mut OrtAllocator) -> OrtStatusPtr) >,
+// void(* 	MemoryInfoGetDeviceType )(const OrtMemoryInfo *ptr, OrtMemoryInfoDeviceType *out)
+
+// void(* 	ReleaseDnnlProviderOptions )(OrtDnnlProviderOptions *input)
+//  	Release an OrtDnnlProviderOptions.
+
+// OrtStatus * 	CreateCustomOpDomain (const char *domain, OrtCustomOpDomain **out)
+//  	Create a custom op domain.
+
+// OrtStatus * 	CustomOpDomain_Add (OrtCustomOpDomain *custom_op_domain, const OrtCustomOp *op)
+//  	Add a custom op to a custom op domain.
+
+// void 	ReleaseCustomOpDomain (OrtCustomOpDomain *input)
+
+// OrtStatus * 	SynchronizeBoundInputs (OrtIoBinding *binding_ptr)
+//  	Synchronize bound inputs. The call may be necessary for some providers, such as cuda, in case the system that
+// allocated bound memory operated on a different stream. However, the operation is provider specific and could be a
+// no-op.
+
+// OrtStatus * 	SynchronizeBoundOutputs (OrtIoBinding *binding_ptr)
+//  	Synchronize bound outputs. The call may be necessary for some providers, such as cuda, in case the system that
+// allocated bound memory operated on a different stream. However, the operation is provider specific and could be a
+// no-op.
+
+// OrtStatus * 	SessionOptionsAppendExecutionProvider_MIGraphX (OrtSessionOptions *options, const
+// OrtMIGraphXProviderOptions *migraphx_options)  	Append MIGraphX provider to session options.
+
+// OrtStatus * 	AddExternalInitializers (OrtSessionOptions *options, const char *const *initializer_names, const OrtValue
+// *const *initializers, size_t initializers_num)  	Replace initialized Tensors with external data with the data provided
+// in initializers.
+
+// OrtStatus * 	CreateOpAttr (const char *name, const void *data, int len, OrtOpAttrType type, OrtOpAttr **op_attr)
+//  	: Create attribute of onnxruntime operator
+
+// void 	ReleaseOpAttr (OrtOpAttr *input)
+
+// OrtStatus * 	CreateOp (const OrtKernelInfo *info, const char *op_name, const char *domain, int version, const char
+// **type_constraint_names, const ONNXTensorElementDataType *type_constraint_values, int type_constraint_count, const
+// OrtOpAttr *const *attr_values, int attr_count, int input_count, int output_count, OrtOp **ort_op)  	: Create
+// onnxruntime native operator
+
+// OrtStatus * 	InvokeOp (const OrtKernelContext *context, const OrtOp *ort_op, const OrtValue *const *input_values, int
+// input_count, OrtValue *const *output_values, int output_count)  	: Invoke the operator created by OrtApi::CreateOp The
+// inputs must follow the order as specified in onnx specification
+
+// void 	ReleaseOp (OrtOp *input)
+
+// OrtStatus * 	SessionOptionsAppendExecutionProvider (OrtSessionOptions *options, const char *provider_name, const char
+// *const *provider_options_keys, const char *const *provider_options_values, size_t num_keys)  	: Append execution
+// provider to the session options.
+
+// OrtStatus * 	CopyKernelInfo (const OrtKernelInfo *info, OrtKernelInfo **info_copy)
+
+// void 	ReleaseKernelInfo (OrtKernelInfo *input)
+
+// OrtStatus * 	SessionOptionsAppendExecutionProvider_CANN (OrtSessionOptions *options, const OrtCANNProviderOptions
+// *cann_options)  	Append CANN provider to session options.
+
+// OrtStatus * 	CreateCANNProviderOptions (OrtCANNProviderOptions **out)
+//  	Create an OrtCANNProviderOptions.
+
+// OrtStatus * 	UpdateCANNProviderOptions (OrtCANNProviderOptions *cann_options, const char *const
+// *provider_options_keys, const char *const *provider_options_values, size_t num_keys)  	Set options in a CANN Execution
+// Provider.
+
+// OrtStatus * 	GetCANNProviderOptionsAsString (const OrtCANNProviderOptions *cann_options, OrtAllocator *allocator, char
+// **ptr)  	Get serialized CANN provider options string.
+
+// OrtStatus * 	UpdateEnvWithCustomLogLevel (OrtEnv *ort_env, OrtLoggingLevel log_severity_level)
+
+// OrtStatus * 	SetGlobalIntraOpThreadAffinity (OrtThreadingOptions *tp_options, const char *affinity_string)
+
+// OrtStatus * 	RegisterCustomOpsLibrary_V2 (OrtSessionOptions *options, const char *library_name)
+//  	Register custom ops from a shared library.
+
+// OrtStatus * 	RegisterCustomOpsUsingFunction (OrtSessionOptions *options, const char *registration_func_name)
+//  	Register custom ops by calling a RegisterCustomOpsFn function.
+
+// OrtStatus * 	SessionOptionsAppendExecutionProvider_Dnnl (OrtSessionOptions *options, const OrtDnnlProviderOptions
+// *dnnl_options)  	Append dnnl provider to session options.
+
+// OrtStatus * 	CreateDnnlProviderOptions (OrtDnnlProviderOptions **out)
+//  	Create an OrtDnnlProviderOptions.
+
+// OrtStatus * 	UpdateDnnlProviderOptions (OrtDnnlProviderOptions *dnnl_options, const char *const
+// *provider_options_keys, const char *const *provider_options_values, size_t num_keys)  	Set options in a oneDNN
+// Execution Provider.
+
+// OrtStatus * 	GetDnnlProviderOptionsAsString (const OrtDnnlProviderOptions *dnnl_options, OrtAllocator *allocator, char
+// **ptr)
+
+// OrtStatus * 	KernelInfoGetConstantInput_tensor (const OrtKernelInfo *info, size_t index, int *is_constant, const
+// OrtValue **out)  	Get a OrtValue tensor stored as a constant initializer in the graph node.
+
+// OrtStatus * 	CastTypeInfoToOptionalTypeInfo (const OrtTypeInfo *type_info, const OrtOptionalTypeInfo **out)
+//  	Get Optional Type information from an OrtTypeInfo.
+
+// OrtStatus * 	GetOptionalContainedTypeInfo (const OrtOptionalTypeInfo *optional_type_info, OrtTypeInfo **out)
+//  	Get OrtTypeInfo for the allowed contained type from an OrtOptionalTypeInfo.
+
+// OrtStatus * 	GetResizedStringTensorElementBuffer (OrtValue *value, size_t index, size_t length_in_bytes, char
+// **buffer)  	Set a single string in a string tensor Do not zero terminate the string data.
+
+// OrtStatus * 	KernelContext_GetAllocator (const OrtKernelContext *context, const OrtMemoryInfo *mem_info, OrtAllocator
+// **out)  	Get Allocator from KernelContext for a specific memoryInfo. Please use C API ReleaseAllocator to release out
+// object.
+
+// OrtModelMetadata
+// OrtStatus * 	ModelMetadataGetProducerName (const OrtModelMetadata *model_metadata, OrtAllocator *allocator, char
+// **value)  	Get producer name from an OrtModelMetadata.
+
+// OrtStatus * 	ModelMetadataGetGraphName (const OrtModelMetadata *model_metadata, OrtAllocator *allocator, char **value)
+//  	Get graph name from an OrtModelMetadata.
+
+// OrtStatus * 	ModelMetadataGetDomain (const OrtModelMetadata *model_metadata, OrtAllocator *allocator, char **value)
+//  	Get domain from an OrtModelMetadata.
+
+// OrtStatus * 	ModelMetadataGetDescription (const OrtModelMetadata *model_metadata, OrtAllocator *allocator, char
+// **value)  	Get description from an OrtModelMetadata.
+
+// OrtStatus * 	ModelMetadataLookupCustomMetadataMap (const OrtModelMetadata *model_metadata, OrtAllocator *allocator,
+// const char *key, char **value)  	Return data for a key in the custom metadata map in an OrtModelMetadata.
+
+// OrtStatus * 	ModelMetadataGetVersion (const OrtModelMetadata *model_metadata, int64_t *value)
+//  	Get version number from an OrtModelMetadata.
+
+// void 	ReleaseModelMetadata (OrtModelMetadata *input)
+
+// OrtStatus * 	ModelMetadataGetCustomMetadataMapKeys (const OrtModelMetadata *model_metadata, OrtAllocator *allocator,
+// char ***keys, int64_t *num_keys)
+
+// OrtStatus * 	ModelMetadataGetGraphDescription (const OrtModelMetadata *model_metadata, OrtAllocator *allocator, char
+// **value)

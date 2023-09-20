@@ -1,24 +1,48 @@
-//, pub CreateMemoryInfo: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             name: *const ::std::os::raw::c_char,
-//             type_: OrtAllocatorType,
-//             id: ::std::os::raw::c_int,
-//             mem_type: OrtMemType,
-//             out: *mut *mut OrtMemoryInfo
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub CreateCpuMemoryInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(type_: OrtAllocatorType, mem_type: OrtMemType, out: *mut
-// *mut OrtMemoryInfo) -> OrtStatusPtr)>, pub CompareMemoryInfo: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(info1: *const OrtMemoryInfo, info2: *const OrtMemoryInfo, out: *mut
-// ::std::os::raw::c_int) -> OrtStatusPtr) >,
-// pub MemoryInfoGetName:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(ptr: *const OrtMemoryInfo, out: *mut *const
-// ::std::os::raw::c_char) -> OrtStatusPtr)>, pub MemoryInfoGetId: ::std::option::Option<crate::ctypes::_system!(unsafe
-// fn(ptr: *const OrtMemoryInfo, out: *mut ::std::os::raw::c_int) -> OrtStatusPtr)>, pub MemoryInfoGetMemType:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(ptr: *const OrtMemoryInfo, out: *mut OrtMemType) ->
-// OrtStatusPtr)>, pub MemoryInfoGetType: ::std::option::Option<crate::ctypes::_system!(unsafe fn(ptr: *const
-// OrtMemoryInfo, out: *mut OrtAllocatorType) -> OrtStatusPtr)>
-// pub ReleaseMemoryInfo: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut OrtMemoryInfo))>,
+use crate::{
+	onnx_call,
+	sys::{OrtArenaCfg, OrtMemoryInfo},
+	Api
+};
+
+impl Api {
+	// OrtStatus * 	CreateMemoryInfo (const char *name, enum OrtAllocatorType type, int id, enum OrtMemType mem_type,
+	// OrtMemoryInfo **out)  	Create an OrtMemoryInfo.
+
+	// OrtStatus * 	CreateCpuMemoryInfo (enum OrtAllocatorType type, enum OrtMemType mem_type, OrtMemoryInfo **out)
+	//  	Create an OrtMemoryInfo for CPU memory.
+
+	// OrtStatus * 	CompareMemoryInfo (const OrtMemoryInfo *info1, const OrtMemoryInfo *info2, int *out)
+	//  	Compare OrtMemoryInfo objects for equality.
+
+	// OrtStatus * 	MemoryInfoGetName (const OrtMemoryInfo *ptr, const char **out)
+	//  	Get name from OrtMemoryInfo.
+
+	// OrtStatus * 	MemoryInfoGetId (const OrtMemoryInfo *ptr, int *out)
+	//  	Get the id from OrtMemoryInfo.
+
+	// OrtStatus * 	MemoryInfoGetMemType (const OrtMemoryInfo *ptr, OrtMemType *out)
+	//  	Get the OrtMemType from OrtMemoryInfo.
+
+	// OrtStatus * 	MemoryInfoGetType (const OrtMemoryInfo *ptr, OrtAllocatorType *out)
+	//  	Get the OrtAllocatorType from OrtMemoryInfo.
+
+	// void 	ReleaseMemoryInfo (OrtMemoryInfo *input)
+
+	// OrtStatus * 	CreateArenaCfg (size_t max_mem, int arena_extend_strategy, int initial_chunk_size_bytes, int
+	// max_dead_bytes_per_chunk, OrtArenaCfg **out)
+
+	// void 	ReleaseArenaCfg (OrtArenaCfg *input)
+
+	// OrtStatus * 	CreateArenaCfgV2 (const char *const *arena_config_keys, const size_t *arena_config_values, size_t
+	// num_keys, OrtArenaCfg **out)  	Create an OrtArenaCfg.
+}
+
+#[repr(transparent)]
+pub struct MemoryInfoPtr {
+	pub(crate) ptr: *mut OrtMemoryInfo
+}
+
+#[repr(transparent)]
+pub struct ArenaConfigPtr {
+	pub(crate) ptr: *mut OrtArenaCfg
+}
