@@ -3,10 +3,10 @@ use crate::{onnx_call, sys::OrtSessionOptions, Api, Result};
 impl Api {
 	// OrtStatus * 	CreateSessionOptions (OrtSessionOptions **options)
 	/// Create an OrtSessionOptions object.
-	pub fn session_options_create(&self) -> Result<SessionOptionsPtr> {
+	pub fn session_options_create(&self) -> Result<SessionOptions> {
 		let mut ptr: *mut OrtSessionOptions = std::ptr::null_mut();
 		onnx_call!(self.api, CreateSessionOptions(&mut ptr))?;
-		Ok(SessionOptionsPtr { ptr })
+		Ok(SessionOptions { ptr })
 	}
 
 	// OrtStatus * 	SetOptimizedModelFilePath (OrtSessionOptions *options, const char *optimized_model_filepath)
@@ -63,7 +63,7 @@ impl Api {
 	//  	Override session symbolic dimensions.
 
 	/// Release allocation for session options.
-	pub(crate) fn session_options_release(&self, opts: &mut SessionOptionsPtr) {
+	pub(crate) fn session_options_release(&self, opts: &mut SessionOptions) {
 		if !opts.ptr.is_null() {
 			onnx_call!(self.api, ReleaseSessionOptions(opts.ptr) -> ()).expect("unable to release session options");
 			opts.ptr = std::ptr::null_mut();
@@ -192,11 +192,17 @@ impl Api {
 }
 
 #[repr(transparent)]
-pub struct SessionOptionsPtr {
+pub struct SessionOptions {
 	ptr: *mut OrtSessionOptions
 }
 
-impl Drop for SessionOptionsPtr {
+impl SessionOptions {
+	pub(crate) fn as_ptr(&self) -> *const OrtSessionOptions {
+		self.ptr
+	}
+}
+
+impl Drop for SessionOptions {
 	fn drop(&mut self) {
 		Api::get().session_options_release(self)
 	}

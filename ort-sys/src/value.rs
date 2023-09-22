@@ -248,9 +248,6 @@ impl Api {}
 // *shape, size_t shape_len, ONNXTensorElementDataType type, OrtValue **out)  	Create a tensor backed by a user supplied
 // buffer.
 
-// OrtStatus * 	IsTensor (const OrtValue *value, int *out)
-//  	Return if an OrtValue is a tensor type.
-
 // OrtStatus * 	GetTensorMutableData (OrtValue *value, void **out)
 //  	Get a pointer to the raw data inside a tensor.
 
@@ -350,12 +347,37 @@ impl Api {}
 //  	Returns a pointer to the OrtMemoryInfo of a Tensor.
 
 #[repr(transparent)]
-pub struct ValuePtr {
-	pub(crate) ptr: *mut OrtValue
+pub struct Value {
+	ptr: *mut OrtValue
 }
 
-impl Drop for ValuePtr {
+impl Value {
+	pub(crate) fn as_ptr(&self) -> *const OrtValue {
+		self.ptr
+	}
+
+	pub(crate) fn as_mut_ptr(&mut self) -> *mut OrtValue {
+		self.ptr
+	}
+
+	pub(crate) fn from_raw(ptr: *mut OrtValue) -> Self {
+		Self { ptr }
+	}
+
+	/// Return if an Value is a tensor type.
+	pub fn is_tensor(&self) -> Result<bool> {
+		let mut out = 0;
+		onnx_call!(Api::get_ptr(), IsTensor(self.ptr, &mut out))?;
+
+		Ok(out > 0)
+	}
+}
+
+impl Drop for Value {
 	fn drop(&mut self) {
-		// Api::get().value_release(self)
+		if !self.ptr.is_null() {
+			onnx_call!(Api::get_ptr(), ReleaseValue(self.ptr) -> ()).expect("unable to release OrtValue");
+			self.ptr = std::ptr::null_mut();
+		}
 	}
 }

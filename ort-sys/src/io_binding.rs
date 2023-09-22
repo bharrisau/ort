@@ -6,26 +6,41 @@ use std::{
 };
 
 use crate::{
-	allocator::AllocatorPtr,
+	allocator::Allocator,
 	ctypes::size_t,
-	memory_info::MemoryInfoPtr,
+	memory_info::MemoryInfo,
 	onnx_call,
 	string::OnnxString,
 	sys::{OrtIoBinding, OrtValue},
-	value::ValuePtr,
+	value::Value,
 	Api, Result
 };
 
-pub struct IoBindingPtr {
+pub struct IoBinding {
 	ptr: *mut OrtIoBinding,
 	input_mapping: HashMap<IobEntry, usize>,
-	inputs: Vec<(OnnxString, ValuePtr)>,
+	inputs: Vec<(OnnxString, Value)>,
 	output_mapping: HashMap<IobEntry, usize>,
-	outputs: Vec<(OnnxString, Option<ValuePtr>)>,
+	outputs: Vec<(OnnxString, Option<Value>)>,
 	dirty_outputs: bool
 }
 
-impl IoBindingPtr {
+impl IoBinding {
+	pub(crate) fn from_ptr(ptr: *mut OrtIoBinding) -> Self {
+		IoBinding {
+			ptr,
+			input_mapping: Default::default(),
+			inputs: Default::default(),
+			output_mapping: Default::default(),
+			outputs: Default::default(),
+			dirty_outputs: false
+		}
+	}
+
+	pub(crate) fn as_ptr(&self) -> *mut OrtIoBinding {
+		self.ptr
+	}
+
 	pub fn clear_bound_inputs(&mut self) -> Result<()> {
 		self.inputs.clear();
 		self.input_mapping.clear();
@@ -51,7 +66,7 @@ impl IoBindingPtr {
 		}
 	}
 
-	pub fn bind_input(&mut self, name: impl AsRef<str>, value: ValuePtr) -> Result<()> {
+	pub fn bind_input(&mut self, name: impl AsRef<str>, value: Value) -> Result<()> {
 		let default = self.inputs.len();
 		let index = match Self::emplace(&mut self.input_mapping, name, default) {
 			Ok(name) => {
@@ -66,10 +81,10 @@ impl IoBindingPtr {
 
 		let (name, value) = &self.inputs[index];
 
-		onnx_call!(Api::get_ptr(), BindInput(self.ptr, name.as_ptr(), value.ptr))
+		onnx_call!(Api::get_ptr(), BindInput(self.ptr, name.as_ptr(), value.as_ptr()))
 	}
 
-	pub fn bind_output(&mut self, name: impl AsRef<str>, value: ValuePtr) -> Result<()> {
+	pub fn bind_output(&mut self, name: impl AsRef<str>, value: Value) -> Result<()> {
 		let default = self.outputs.len();
 		let index = match Self::emplace(&mut self.output_mapping, name, default) {
 			Ok(name) => {
@@ -84,10 +99,10 @@ impl IoBindingPtr {
 
 		let (name, value) = &self.outputs[index];
 
-		onnx_call!(Api::get_ptr(), BindOutput(self.ptr, name.as_ptr(), value.as_ref().unwrap().ptr))
+		onnx_call!(Api::get_ptr(), BindOutput(self.ptr, name.as_ptr(), value.as_ref().unwrap().as_ptr()))
 	}
 
-	pub fn bind_output_to_device(&mut self, name: impl AsRef<str>, mem: &MemoryInfoPtr) -> Result<()> {
+	pub fn bind_output_to_device(&mut self, name: impl AsRef<str>, mem: &MemoryInfo) -> Result<()> {
 		self.dirty_outputs = true;
 		let default = self.outputs.len();
 		let index = match Self::emplace(&mut self.output_mapping, name, default) {
@@ -106,7 +121,7 @@ impl IoBindingPtr {
 		onnx_call!(Api::get_ptr(), BindOutputToDevice(self.ptr, name.as_ptr(), mem.ptr))
 	}
 
-	fn update_outputs(&mut self, alloc: &AllocatorPtr) -> Result<()> {
+	pub(crate) fn update_outputs(&mut self, alloc: &Allocator) -> Result<()> {
 		if !self.dirty_outputs {
 			// We shotcut here as we don't need to get the values
 			return Ok(());
@@ -118,7 +133,7 @@ impl IoBindingPtr {
 			let mut lengths: *mut size_t = std::ptr::null_mut();
 			let mut count: size_t = 0;
 
-			onnx_call!(Api::get_ptr(), GetBoundOutputNames(self.ptr, alloc.ptr, &mut buffer, &mut lengths, &mut count))?;
+			alloc.with_ptr(|alloc_ptr| onnx_call!(Api::get_ptr(), GetBoundOutputNames(self.ptr, alloc_ptr, &mut buffer, &mut lengths, &mut count)))?;
 			let length_slice = unsafe { alloc.to_slice(lengths, count) };
 			let total_len: size_t = length_slice.iter().sum();
 			let char_slice = unsafe { alloc.to_slice(buffer as *mut u8, total_len) };
@@ -140,11 +155,11 @@ impl IoBindingPtr {
 		let mut values: *mut *mut OrtValue = std::ptr::null_mut();
 		let mut count: size_t = 0;
 
-		onnx_call!(Api::get_ptr(), GetBoundOutputValues(self.ptr, alloc.ptr, &mut values, &mut count))?;
+		alloc.with_ptr(|alloc_ptr| onnx_call!(Api::get_ptr(), GetBoundOutputValues(self.ptr, alloc_ptr, &mut values, &mut count)))?;
 		let value_slice = unsafe { alloc.to_slice(values, count) };
 
 		for (value, (_name, option)) in value_slice.iter().zip(self.outputs.iter_mut()) {
-			let value = ValuePtr { ptr: *value };
+			let value = Value::from_raw(*value);
 			if option.is_none() {
 				*option = Some(value);
 			}
@@ -156,118 +171,17 @@ impl IoBindingPtr {
 	}
 
 	// TODO - use the type system to enforce the ending nul byte
-	pub fn get_outputs(&self) -> impl Iterator<Item = (&str, &ValuePtr)> {
+	pub fn get_outputs(&self) -> impl Iterator<Item = (&str, &Value)> {
 		assert!(!self.dirty_outputs, "tried to get outputs without running bindings");
 		self.outputs.iter().map(|(name, value)| (name.as_str(), value.as_ref().unwrap()))
 	}
 }
 
-impl Drop for IoBindingPtr {
+impl Drop for IoBinding {
 	fn drop(&mut self) {
 		if !self.ptr.is_null() {
 			onnx_call!(Api::get_ptr(), ReleaseIoBinding(self.ptr) -> ()).expect("unable to release io binding");
 			self.ptr = std::ptr::null_mut();
-		}
-	}
-}
-
-pub enum BoundOutputNames {
-	Empty,
-	Values { buffer: *mut c_char, lengths: *mut size_t, count: usize }
-}
-
-impl<'a> IntoIterator for &'a BoundOutputNames {
-	type Item = &'a str;
-
-	type IntoIter = BoundOutputNamesIterator<'a>;
-
-	fn into_iter(self) -> Self::IntoIter {
-		match self {
-			BoundOutputNames::Empty => BoundOutputNamesIterator {
-				lengths: Default::default(),
-				buffer: std::ptr::null_mut()
-			},
-			BoundOutputNames::Values { buffer, lengths, count } => {
-				let lengths = unsafe { std::slice::from_raw_parts(*lengths, *count) };
-				BoundOutputNamesIterator { lengths, buffer: *buffer as _ }
-			}
-		}
-	}
-}
-
-impl Drop for BoundOutputNames {
-	fn drop(&mut self) {
-		// Need the allocator ref here to release with
-		// Release buffer
-		// Release lengths
-		// Api::get().release_available_providers(self);
-	}
-}
-
-pub struct BoundOutputNamesIterator<'a> {
-	lengths: &'a [size_t],
-	buffer: *mut u8
-}
-
-impl<'a> Iterator for BoundOutputNamesIterator<'a> {
-	type Item = &'a str;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		if let Some((len, rest)) = self.lengths.split_first() {
-			self.lengths = rest;
-			unsafe {
-				let ret = std::slice::from_raw_parts(self.buffer, *len);
-				self.buffer = self.buffer.add(*len);
-				Some(std::str::from_utf8_unchecked(ret))
-			}
-		} else {
-			None
-		}
-	}
-}
-
-pub enum BoundOutputValues {
-	Empty,
-	Values { values: *mut *mut OrtValue, count: usize }
-}
-
-impl<'a> IntoIterator for &'a BoundOutputValues {
-	type Item = ValuePtr;
-
-	type IntoIter = BoundOutputValuesIterator<'a>;
-
-	fn into_iter(self) -> Self::IntoIter {
-		match self {
-			BoundOutputValues::Empty => BoundOutputValuesIterator { values: Default::default() },
-			BoundOutputValues::Values { values, count } => {
-				let values = unsafe { std::slice::from_raw_parts(*values, *count) };
-				BoundOutputValuesIterator { values }
-			}
-		}
-	}
-}
-
-impl Drop for BoundOutputValues {
-	fn drop(&mut self) {
-		// Need the allocator ref here to release with
-		// Release buffer
-		// Api::get().release_available_providers(self);
-	}
-}
-
-pub struct BoundOutputValuesIterator<'a> {
-	values: &'a [*mut OrtValue]
-}
-
-impl<'a> Iterator for BoundOutputValuesIterator<'a> {
-	type Item = ValuePtr;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		if let Some((value, rest)) = self.values.split_first() {
-			self.values = rest;
-			Some(ValuePtr { ptr: *value })
-		} else {
-			None
 		}
 	}
 }
@@ -315,6 +229,7 @@ impl IobInner {
 	fn upgrade(&mut self) -> &OnnxString {
 		match self {
 			IobInner::Query(s) => {
+				OnnxString::prepare(s.len() + 1);
 				*self = IobInner::Owned(OnnxString::to_rc(s));
 
 				if let IobInner::Owned(rc) = self { rc } else { unreachable!() }

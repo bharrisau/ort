@@ -1,201 +1,296 @@
-use crate::{onnx_call, Api, Result};
+use std::{
+	ffi::{c_char, CStr},
+	path::Path,
+	ptr::null_mut
+};
+
+use smallvec::SmallVec;
+
+use crate::{
+	allocator::{Allocator, AllocatorValue},
+	ctypes::size_t,
+	environment::Env,
+	io_binding::IoBinding,
+	onnx_call,
+	run_options::RunOptions,
+	session_options::SessionOptions,
+	string::OnnxString,
+	sys::{OrtSession, OrtTypeInfo, OrtValue},
+	value::Value,
+	Api, Result
+};
 
 impl Api {}
+struct Session {
+	ptr: *mut OrtSession,
+	alloc: Allocator
+}
 
-// pub CreateSession: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(env: *const OrtEnv, model_path: *const ORTCHAR_T, options: *const OrtSessionOptions, out: *mut *mut
-// OrtSession) -> OrtStatusPtr     )
-// >,
-// pub CreateSessionFromArray: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             env: *const OrtEnv,
-//             model_data: *const ::std::os::raw::c_void,
-//             model_data_length: size_t,
-//             options: *const OrtSessionOptions,
-//             out: *mut *mut OrtSession
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub Run: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             session: *mut OrtSession,
-//             run_options: *const OrtRunOptions,
-//             input_names: *const *const ::std::os::raw::c_char,
-//             inputs: *const *const OrtValue,
-//             input_len: size_t,
-//             output_names: *const *const ::std::os::raw::c_char,
-//             output_names_len: size_t,
-//             outputs: *mut *mut OrtValue
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub SessionGetInputCount: ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, out:
-// *mut size_t) -> OrtStatusPtr)>, pub SessionGetOutputCount: ::std::option::Option<crate::ctypes::_system!(unsafe
-// fn(session: *const OrtSession, out: *mut size_t) -> OrtStatusPtr)>, pub SessionGetOverridableInitializerCount:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, out: *mut size_t) ->
-// OrtStatusPtr)>, pub SessionGetInputTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, index: size_t, type_info:
-// *mut *mut OrtTypeInfo) -> OrtStatusPtr)>, pub SessionGetOutputTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, index: size_t, type_info:
-// *mut *mut OrtTypeInfo) -> OrtStatusPtr)>, pub SessionGetOverridableInitializerTypeInfo:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, index: size_t, type_info:
-// *mut *mut OrtTypeInfo) -> OrtStatusPtr)>, pub SessionGetInputName: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(session: *const OrtSession, index: size_t, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub SessionGetOutputName: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(session: *const OrtSession, index: size_t, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub SessionGetOverridableInitializerName: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(session: *const OrtSession, index: size_t, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub ReleaseSession: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut OrtSession))>,
-//, pub SessionEndProfiling: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(session: *mut OrtSession, allocator: *mut OrtAllocator, out: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr) >,
-// pub SessionGetModelMetadata:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, out: *mut *mut
-// OrtModelMetadata) -> OrtStatusPtr)>, pub ModelMetadataGetProducerName: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(model_metadata: *const OrtModelMetadata, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub ModelMetadataGetGraphName: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(model_metadata: *const OrtModelMetadata, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub ModelMetadataGetDomain: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(model_metadata: *const OrtModelMetadata, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub ModelMetadataGetDescription: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(model_metadata: *const OrtModelMetadata, allocator: *mut OrtAllocator, value: *mut *mut
-// ::std::os::raw::c_char) -> OrtStatusPtr     )
-// >,
-// pub ModelMetadataLookupCustomMetadataMap: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             model_metadata: *const OrtModelMetadata,
-//             allocator: *mut OrtAllocator,
-//             key: *const ::std::os::raw::c_char,
-//             value: *mut *mut ::std::os::raw::c_char
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub ModelMetadataGetVersion:
-//     ::std::option::Option<crate::ctypes::_system!(unsafe fn(model_metadata: *const OrtModelMetadata, value: *mut i64)
-// -> OrtStatusPtr)>, pub ReleaseModelMetadata: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut
-// OrtModelMetadata))>,
-// pub CreatePrepackedWeightsContainer: ::std::option::Option<crate::ctypes::_system!(unsafe fn(out: *mut *mut
-// OrtPrepackedWeightsContainer) -> OrtStatusPtr)>, pub ReleasePrepackedWeightsContainer:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(input: *mut OrtPrepackedWeightsContainer))>,
-// pub CreateSessionWithPrepackedWeightsContainer: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             env: *const OrtEnv,
-//             model_path: *const ORTCHAR_T,
-//             options: *const OrtSessionOptions,
-//             prepacked_weights_container: *mut OrtPrepackedWeightsContainer,
-//             out: *mut *mut OrtSession
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub CreateSessionFromArrayWithPrepackedWeightsContainer: ::std::option::Option<
-//     crate::ctypes::_system!(
-//         unsafe fn(
-//             env: *const OrtEnv,
-//             model_data: *const ::std::os::raw::c_void,
-//             model_data_length: size_t,
-//             options: *const OrtSessionOptions,
-//             prepacked_weights_container: *mut OrtPrepackedWeightsContainer,
-//             out: *mut *mut OrtSession
-//         ) -> OrtStatusPtr
-//     )
-// >,
-// pub RunWithBinding: ::std::option::Option<
-//     crate::ctypes::_system!(unsafe fn(session: *mut OrtSession, run_options: *const OrtRunOptions, binding_ptr:
-// *const OrtIoBinding) -> OrtStatusPtr) >,
-// pub CreateIoBinding: ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *mut OrtSession, out: *mut *mut
-// OrtIoBinding) -> OrtStatusPtr)>, pub ReleaseIoBinding: ::std::option::Option<crate::ctypes::_system!(unsafe fn(input:
-// *mut OrtIoBinding))>,
-//, pub SessionGetProfilingStartTimeNs:
-// ::std::option::Option<crate::ctypes::_system!(unsafe fn(session: *const OrtSession, out: *mut u64) -> OrtStatusPtr)>,
+unsafe impl Sync for Session {}
+unsafe impl Send for Session {}
 
-// OrtStatus * 	CreateSession (const OrtEnv *env, const char *model_path, const OrtSessionOptions *options, OrtSession
-// **out)  	Create an OrtSession from a model file.
+impl Session {
+	fn from_ptr(_ptr: *mut OrtSession) -> Self {
+		todo!()
+	}
 
-// OrtStatus * 	CreateSessionFromArray (const OrtEnv *env, const void *model_data, size_t model_data_length, const
-// OrtSessionOptions *options, OrtSession **out)  	Create an OrtSession from memory.
+	/// Create an OrtSession from a model file.
+	pub fn create(env: Env, model_path: &Path, options: &SessionOptions) -> Result<Session> {
+		let mut ptr = null_mut();
+		let path = OnnxString::to_onnx_path(model_path);
 
-// OrtStatus * 	Run (OrtSession *session, const OrtRunOptions *run_options, const char *const *input_names, const
-// OrtValue *const *inputs, size_t input_len, const char *const *output_names, size_t output_names_len, OrtValue
-// **outputs)  	Run the model in an OrtSession.
+		onnx_call!(Api::get_ptr(), CreateSession(env.as_ptr(), path.as_ptr(), options.as_ptr(), &mut ptr))?;
 
-// OrtStatus * 	SessionGetInputCount (const OrtSession *session, size_t *out)
-//  	Get input count for a session.
+		Ok(Self::from_ptr(ptr))
+	}
 
-// OrtStatus * 	SessionGetOutputCount (const OrtSession *session, size_t *out)
-//  	Get output count for a session.
+	/// Create an OrtSession from memory.
+	pub fn create_from_array(env: Env, model_data: &[u8], options: &SessionOptions) -> Result<Session> {
+		let mut ptr = null_mut();
 
-// OrtStatus * 	SessionGetOverridableInitializerCount (const OrtSession *session, size_t *out)
-//  	Get overridable initializer count.
+		onnx_call!(Api::get_ptr(), CreateSessionFromArray(env.as_ptr(), model_data.as_ptr() as _, model_data.len(), options.as_ptr(), &mut ptr))?;
 
-// OrtStatus * 	SessionGetInputTypeInfo (const OrtSession *session, size_t index, OrtTypeInfo **type_info)
-//  	Get input type information.
+		Ok(Self::from_ptr(ptr))
+	}
 
-// OrtStatus * 	SessionGetOutputTypeInfo (const OrtSession *session, size_t index, OrtTypeInfo **type_info)
-//  	Get output type information.
+	/// Run the model in an OrtSession.
+	///
+	/// Blocks until the model run has completed.
+	/// Multiple threads might be used to run the model based on the options in the Session and settings used when
+	/// creating the Env.
+	#[allow(clippy::useless_conversion)]
+	pub fn run(
+		&self,
+		options: &RunOptions,
+		inputs: &[&Value],
+		input_names: &[&str],
+		outputs: impl Iterator<Item = Option<Value>>,
+		output_names: &[&str]
+	) -> Result<impl Iterator<Item = Value>> {
+		OnnxString::prepare(input_names.iter().chain(output_names.iter()).map(|s| s.len() + 1).sum());
 
-// OrtStatus * 	SessionGetOverridableInitializerTypeInfo (const OrtSession *session, size_t index, OrtTypeInfo
-// **type_info)  	Get overridable initializer type information.
+		let input_name_ptrs: SmallVec<[*const c_char; 16]> = input_names.iter().map(|s| OnnxString::to_onnx(s).0).collect();
+		let input_len: size_t = input_names.len().try_into().unwrap();
+		let input_value_ptrs: SmallVec<[*const OrtValue; 16]> = inputs.iter().map(|v| v.as_ptr()).collect();
 
-// OrtStatus * 	SessionGetInputName (const OrtSession *session, size_t index, OrtAllocator *allocator, char **value)
-//  	Get input name.
+		let output_name_ptrs: SmallVec<[*const c_char; 16]> = output_names.iter().map(|s| OnnxString::to_onnx(s).0).collect();
+		let output_len: size_t = output_names.len().try_into().unwrap();
+		let mut outputs: SmallVec<[Option<Value>; 16]> = outputs.collect();
+		let mut output_value_ptrs: SmallVec<[*mut OrtValue; 16]> = outputs
+			.iter_mut()
+			.map(|v| v.as_mut().map(|vv| vv.as_mut_ptr()).unwrap_or(null_mut()))
+			.collect();
 
-// OrtStatus * 	SessionGetOutputName (const OrtSession *session, size_t index, OrtAllocator *allocator, char **value)
-//  	Get output name.
+		onnx_call!(
+			Api::get_ptr(),
+			Run(
+				self.ptr,
+				options.as_ptr(),
+				input_name_ptrs.as_ptr(),
+				input_value_ptrs.as_ptr(),
+				input_len,
+				output_name_ptrs.as_ptr(),
+				output_len,
+				output_value_ptrs.as_mut_ptr()
+			)
+		)?;
 
-// OrtStatus * 	SessionGetOverridableInitializerName (const OrtSession *session, size_t index, OrtAllocator *allocator,
-// char **value)  	Get overridable initializer name.
+		// Fill in the None's with the returned values
+		let ret = outputs
+			.into_iter()
+			.zip(output_value_ptrs.into_iter())
+			.map(|(opt, ptr)| opt.unwrap_or_else(|| Value::from_raw(ptr)));
 
-// void 	ReleaseSession (OrtSession *input)
+		Ok(ret)
+	}
 
-// OrtStatus * 	SessionEndProfiling (OrtSession *session, OrtAllocator *allocator, char **out)
-//  	End profiling and return filename of the profile data.
+	/// Run the model asynchronously in a thread owned by intra op thread pool.
+	// #[allow(clippy::useless_conversion)]
+	// pub fn run_async(
+	// 	&self,
+	// 	options: &RunOptions,
+	// 	inputs: &[&Value],
+	// 	input_names: &[&str],
+	// 	outputs: impl Iterator<Item = Option<Value>>,
+	// 	output_names: &[&str]
+	// ) -> Result<impl Iterator<Item = Value>> {
+	// 	OnnxString::prepare(input_names.iter().chain(output_names.iter()).map(|s| s.len() + 1).sum());
 
-// OrtStatus * 	SessionGetModelMetadata (const OrtSession *session, OrtModelMetadata **out)
-//  	Get OrtModelMetadata from an OrtSession.
+	// 	let input_name_ptrs: SmallVec<[*const c_char; 16]> = input_names.iter().map(|s| OnnxString::to_onnx(s).0).collect();
+	// 	let input_len: size_t = input_names.len().try_into().unwrap();
+	// 	let input_value_ptrs: SmallVec<[*const OrtValue; 16]> = inputs.iter().map(|v| v.as_ptr()).collect();
 
-// OrtStatus * 	RunWithBinding (OrtSession *session, const OrtRunOptions *run_options, const OrtIoBinding *binding_ptr)
-//  	Run a model using Io Bindings for the inputs & outputs.
+	// 	let output_name_ptrs: SmallVec<[*const c_char; 16]> = output_names.iter().map(|s|
+	// OnnxString::to_onnx(s).0).collect(); 	let output_len: size_t = output_names.len().try_into().unwrap();
+	// 	let mut outputs: SmallVec<[Option<Value>; 16]> = outputs.collect();
+	// 	let mut output_value_ptrs: SmallVec<[*mut OrtValue; 16]> = outputs
+	// 		.iter_mut()
+	// 		.map(|v| v.as_mut().map(|vv| vv.as_mut_ptr()).unwrap_or(null_mut()))
+	// 		.collect();
 
-// OrtStatus * 	CreateIoBinding (OrtSession *session, OrtIoBinding **out)
-//  	Create an OrtIoBinding instance.
+	// 	let callback: *mut c_void = std::ptr::null_mut();
+	// 	// let shared = Arc
+	// 	let shared_ptr: *mut c_void = std::ptr::null_mut();
 
-// OrtStatus * 	SessionGetProfilingStartTimeNs (const OrtSession *session, uint64_t *out)
-//  	Return the time that profiling was started.
+	// 	// onnx_call!(
+	// 	// 	Api::get_ptr(),
+	// 	// 	RunAsync(
+	// 	// 		self.ptr,
+	// 	// 		options.as_ptr(),
+	// 	// 		input_name_ptrs.as_ptr(),
+	// 	// 		input_value_ptrs.as_ptr(),
+	// 	// 		input_len,
+	// 	// 		output_name_ptrs.as_ptr(),
+	// 	// 		output_len,
+	// 	// 		output_value_ptrs.as_mut_ptr()
+	// 	// 	)
+	// 	// )?;
 
-// OrtStatus * 	CreateSessionWithPrepackedWeightsContainer (const OrtEnv *env, const char *model_path, const
-// OrtSessionOptions *options, OrtPrepackedWeightsContainer *prepacked_weights_container, OrtSession **out)
-//  	Create session with prepacked weights container.
+	// 	Ok(output_value_ptrs.into_iter().map(Value::from_raw))
+	// }
 
-// OrtStatus * 	CreateSessionFromArrayWithPrepackedWeightsContainer (const OrtEnv *env, const void *model_data, size_t
-// model_data_length, const OrtSessionOptions *options, OrtPrepackedWeightsContainer *prepacked_weights_container,
-// OrtSession **out)  	Create session from memory with prepacked weights container.
+	// OrtStatus * 	SessionGetInputCount (const OrtSession *session, size_t *out)
+	//  	Get input count for a session.
+	pub fn input_count(&self) -> Result<usize> {
+		let mut out = 0;
+		onnx_call!(Api::get_ptr(), SessionGetInputCount(self.ptr, &mut out))?;
+		Ok(out)
+	}
 
-// OrtStatus * 	CreatePrepackedWeightsContainer (OrtPrepackedWeightsContainer **out)
-//  	Create an OrtPrepackedWeightsContainer.
+	// Get output count for a session.
+	pub fn outputs_count(&self) -> Result<usize> {
+		let mut out = 0;
+		onnx_call!(Api::get_ptr(), SessionGetOutputCount(self.ptr, &mut out))?;
+		Ok(out)
+	}
 
-// void 	ReleasePrepackedWeightsContainer (OrtPrepackedWeightsContainer *input)
-//  	Release OrtPrepackedWeightsContainer instance.
+	/// Get overridable initializer count.
+	pub fn initializer_count(&self) -> Result<usize> {
+		let mut out = 0;
+		onnx_call!(Api::get_ptr(), SessionGetOverridableInitializerCount(self.ptr, &mut out))?;
+		Ok(out)
+	}
+
+	/// Get input type information.
+	#[allow(clippy::useless_conversion)]
+	pub fn input_type_info(&self, idx: usize) -> Result<TypeInfo> {
+		let index = idx.try_into().unwrap();
+		let mut ptr = null_mut();
+		onnx_call!(Api::get_ptr(), SessionGetInputTypeInfo(self.ptr, index, &mut ptr))?;
+		Ok(TypeInfo { ptr })
+	}
+
+	/// Get output type information.
+	#[allow(clippy::useless_conversion)]
+	pub fn output_type_info(&self, idx: usize) -> Result<TypeInfo> {
+		let index = idx.try_into().unwrap();
+		let mut ptr = null_mut();
+		onnx_call!(Api::get_ptr(), SessionGetOutputTypeInfo(self.ptr, index, &mut ptr))?;
+		Ok(TypeInfo { ptr })
+	}
+
+	/// Get overridable initializer type information.
+	#[allow(clippy::useless_conversion)]
+	pub fn initializer_type_info(&self, idx: usize) -> Result<TypeInfo> {
+		let index = idx.try_into().unwrap();
+		let mut ptr = null_mut();
+		onnx_call!(Api::get_ptr(), SessionGetOverridableInitializerTypeInfo(self.ptr, index, &mut ptr))?;
+		Ok(TypeInfo { ptr })
+	}
+
+	/// Get input name.
+	#[allow(clippy::useless_conversion)]
+	pub fn input_name(&self, idx: usize, alloc: Allocator) -> Result<AllocatorValue<&str>> {
+		let index = idx.try_into().unwrap();
+		let mut ptr = null_mut();
+
+		alloc.with_ptr(|alloc_ptr| onnx_call!(Api::get_ptr(), SessionGetInputName(self.ptr, index, alloc_ptr, &mut ptr)))?;
+
+		let name = unsafe { std::str::from_utf8_unchecked(CStr::from_ptr(ptr).to_bytes()) };
+
+		Ok(AllocatorValue::create(name, alloc, ptr as _))
+	}
+
+	/// Get output name.
+	#[allow(clippy::useless_conversion)]
+	pub fn output_name(&mut self, idx: usize, alloc: Allocator) -> Result<AllocatorValue<&str>> {
+		let index = idx.try_into().unwrap();
+		let mut ptr = null_mut();
+		alloc.with_ptr(|alloc_ptr| onnx_call!(Api::get_ptr(), SessionGetOutputName(self.ptr, index, alloc_ptr, &mut ptr)))?;
+
+		let name = unsafe { std::str::from_utf8_unchecked(CStr::from_ptr(ptr).to_bytes()) };
+
+		Ok(AllocatorValue::create(name, alloc, ptr as _))
+	}
+
+	/// Get overridable initializer name.
+	#[allow(clippy::useless_conversion)]
+	pub fn initializer_name(&self, idx: usize, alloc: Allocator) -> Result<AllocatorValue<&str>> {
+		let index = idx.try_into().unwrap();
+		let mut ptr = null_mut();
+		alloc.with_ptr(|alloc_ptr| onnx_call!(Api::get_ptr(), SessionGetOverridableInitializerName(self.ptr, index, alloc_ptr, &mut ptr)))?;
+
+		let name = unsafe { std::str::from_utf8_unchecked(CStr::from_ptr(ptr).to_bytes()) };
+
+		Ok(AllocatorValue::create(name, alloc, ptr as _))
+	}
+
+	/// End profiling and return filename of the profile data.
+	pub fn end_profiling(&self, alloc: Allocator) -> Result<AllocatorValue<&str>> {
+		let mut ptr = null_mut();
+		alloc.with_ptr(|alloc_ptr| onnx_call!(Api::get_ptr(), SessionEndProfiling(self.ptr, alloc_ptr, &mut ptr)))?;
+
+		let name = unsafe { std::str::from_utf8_unchecked(CStr::from_ptr(ptr).to_bytes()) };
+
+		Ok(AllocatorValue::create(name, alloc, ptr as _))
+	}
+
+	// OrtStatus * 	SessionGetModelMetadata (const OrtSession *session, OrtModelMetadata **out)
+	//  	Get OrtModelMetadata from an OrtSession.
+
+	/// Run a model using Io Bindings for the inputs & outputs.
+	pub fn run_with_binding(&mut self, options: &RunOptions, binding: &mut IoBinding) -> Result<()> {
+		onnx_call!(Api::get_ptr(), RunWithBinding(self.ptr, options.as_ptr(), binding.as_ptr()))?;
+		binding.update_outputs(&self.alloc)?;
+
+		Ok(())
+	}
+
+	/// Create an IoBinding instance.
+	pub fn create_binding(&self) -> Result<IoBinding> {
+		let mut ptr = null_mut();
+		onnx_call!(Api::get_ptr(), CreateIoBinding(self.ptr, &mut ptr))?;
+
+		Ok(IoBinding::from_ptr(ptr))
+	}
+
+	// OrtStatus * 	SessionGetProfilingStartTimeNs (const OrtSession *session, uint64_t *out)
+	//  	Return the time that profiling was started.
+
+	// OrtStatus * 	CreateSessionWithPrepackedWeightsContainer (const OrtEnv *env, const char *model_path, const
+	// OrtSessionOptions *options, OrtPrepackedWeightsContainer *prepacked_weights_container, OrtSession **out)
+	//  	Create session with prepacked weights container.
+
+	// OrtStatus * 	CreateSessionFromArrayWithPrepackedWeightsContainer (const OrtEnv *env, const void *model_data, size_t
+	// model_data_length, const OrtSessionOptions *options, OrtPrepackedWeightsContainer *prepacked_weights_container,
+	// OrtSession **out)  	Create session from memory with prepacked weights container.
+
+	// OrtStatus * 	CreatePrepackedWeightsContainer (OrtPrepackedWeightsContainer **out)
+	//  	Create an OrtPrepackedWeightsContainer.
+
+	// void 	ReleasePrepackedWeightsContainer (OrtPrepackedWeightsContainer *input)
+	//  	Release OrtPrepackedWeightsContainer instance.
+}
+
+impl Drop for Session {
+	fn drop(&mut self) {
+		if !self.ptr.is_null() {
+			onnx_call!(Api::get_ptr(), ReleaseSession(self.ptr) -> ()).expect("unable to release OrtSession");
+			self.ptr = null_mut();
+		}
+	}
+}
+
+struct TypeInfo {
+	ptr: *mut OrtTypeInfo
+}

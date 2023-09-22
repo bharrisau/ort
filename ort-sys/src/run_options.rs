@@ -1,6 +1,16 @@
-use crate::{onnx_call, Api, Result};
+use crate::{onnx_call, sys::OrtRunOptions, Api, Result};
 
 impl Api {}
+
+pub struct RunOptions {
+	ptr: *mut OrtRunOptions
+}
+
+impl RunOptions {
+	pub(crate) fn as_ptr(&self) -> *const OrtRunOptions {
+		self.ptr
+	}
+}
 
 // pub CreateRunOptions: ::std::option::Option<crate::ctypes::_system!(unsafe fn(out: *mut *mut OrtRunOptions) ->
 // OrtStatusPtr)>, pub RunOptionsSetRunLogVerbosityLevel:

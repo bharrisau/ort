@@ -1,174 +1,74 @@
 use std::ffi::CString;
 
 use crate::logger::{LogLevel, Logger, LoggerPtr};
-use crate::memory_info::{ArenaConfigPtr, MemoryInfoPtr};
+use crate::memory_info::{ArenaConfig, MemoryInfo};
+use crate::string::OnnxString;
 use crate::sys::{OrtEnv, OrtThreadingOptions};
 use crate::{onnx_call, Api, Result};
 
-impl Api {
-	/// Create a new OrtEnv
-	pub fn env_create(&self, log_severity_level: LogLevel, logid: impl Into<Vec<u8>>) -> Result<EnvPtr> {
-		let logid = CString::new(logid).expect("invalid log identifier");
+// SetGlobalCustomCreateThreadFn
+// SetGlobalCustomThreadCreationOptions
+// SetGlobalCustomJoinThreadFn
+
+#[derive(Debug)]
+pub struct Env {
+	ptr: *mut OrtEnv,
+	logger: Option<LoggerPtr>
+}
+
+unsafe impl Send for Env {}
+unsafe impl Sync for Env {}
+
+impl Env {
+	pub fn create<T: Logger + 'static>(log_severity_level: LogLevel, logid: &str, logger: Option<T>, tp_options: Option<&ThreadingOptions>) -> Result<Env> {
+		OnnxString::prepare(logid.len() + 1);
+		let (logid_ptr, _) = OnnxString::to_onnx(logid);
 		let mut env_ptr: *mut OrtEnv = std::ptr::null_mut();
+		let logger = logger.map(LoggerPtr::for_logger);
 
-		onnx_call!(self.api, CreateEnv(log_severity_level.into(), logid.as_ptr(), &mut env_ptr))?;
+		match (logger.as_ref(), tp_options) {
+			(None, None) => onnx_call!(Api::get_ptr(), CreateEnv(log_severity_level.into(), logid_ptr, &mut env_ptr))?,
+			(Some(logger), None) => {
+				onnx_call!(Api::get_ptr(), CreateEnvWithCustomLogger(logger.log, logger.ptr, log_severity_level.into(), logid_ptr, &mut env_ptr))?
+			}
+			(None, Some(tp)) => onnx_call!(Api::get_ptr(), CreateEnvWithGlobalThreadPools(log_severity_level.into(), logid_ptr, tp.as_ptr(), &mut env_ptr))?,
+			(Some(logger), Some(tp)) => onnx_call!(
+				Api::get_ptr(),
+				CreateEnvWithCustomLoggerAndGlobalThreadPools(logger.log, logger.ptr, log_severity_level.into(), logid_ptr, tp.as_ptr(), &mut env_ptr)
+			)?
+		}
 
-		Ok(EnvPtr {
-			ptr: env_ptr,
-			logger: None,
-			tp_options: None
-		})
+		Ok(Env { ptr: env_ptr, logger })
 	}
 
-	/// Create a new OrtEnv with logger
-	pub fn env_create_with_custom_logger<T: Logger + 'static>(&self, logger: T, log_severity_level: LogLevel, logid: impl Into<Vec<u8>>) -> Result<EnvPtr> {
-		let logid = CString::new(logid).expect("invalid log identifier");
-		let mut env_ptr: *mut OrtEnv = std::ptr::null_mut();
-
-		// let param = LoggerHandle::for_logger(logger);
-		// let param = Box::into_raw(Box::new(logger));
-		let logger = LoggerPtr::for_logger(logger);
-
-		// onnx_call!(self.api, CreateEnvWithCustomLogger(Some(log_function), param as _, log_severity_level.into(),
-		// logid.as_ptr(), &mut env_ptr))?;
-		onnx_call!(self.api, CreateEnvWithCustomLogger(logger.log, logger.ptr, log_severity_level.into(), logid.as_ptr(), &mut env_ptr))?;
-
-		Ok(EnvPtr {
-			ptr: env_ptr,
-			logger: Some(logger),
-			tp_options: None
-		})
+	pub(crate) fn as_ptr(&self) -> *const OrtEnv {
+		self.ptr
 	}
 
-	/// Enable Telemetry.
-	pub fn env_enable_telemetry_events(&self, env: &EnvPtr) -> Result<()> {
-		onnx_call!(self.api, EnableTelemetryEvents(env.ptr))
+	pub fn enable_telemetry_events(&self) -> Result<()> {
+		onnx_call!(Api::get_ptr(), EnableTelemetryEvents(self.ptr))
 	}
 
 	/// Disable Telemetry.
-	pub fn env_disable_telemetry_events(&self, env: &EnvPtr) -> Result<()> {
-		onnx_call!(self.api, DisableTelemetryEvents(env.ptr))
+	pub fn disable_telemetry_events(&self) -> Result<()> {
+		onnx_call!(Api::get_ptr(), DisableTelemetryEvents(self.ptr))
 	}
 
-	/// Release the allocation for this OrtEnv
-	pub(crate) fn env_release(&self, env: &mut EnvPtr) {
-		if !env.ptr.is_null() {
-			onnx_call!(self.api, ReleaseEnv(env.ptr) -> ()).expect("unable to release OrtEnv");
-			env.ptr = std::ptr::null_mut();
-		}
+	pub fn create_and_register_allocator(&self, mem: &MemoryInfo, arena: &ArenaConfig) -> Result<()> {
+		onnx_call!(Api::get_ptr(), CreateAndRegisterAllocator(self.ptr, mem.ptr, arena.ptr))
 	}
 
-	/// Create a new OrtEnv with threadpool
-	pub fn env_create_with_global_thread_pools(&self, log_severity_level: LogLevel, logid: impl Into<Vec<u8>>, tp_options: ThreadingOptions) -> Result<EnvPtr> {
-		let logid = CString::new(logid).expect("invalid log identifier");
-		let mut env_ptr: *mut OrtEnv = std::ptr::null_mut();
-
-		onnx_call!(self.api, CreateEnvWithGlobalThreadPools(log_severity_level.into(), logid.as_ptr(), tp_options.as_ptr(), &mut env_ptr))?;
-
-		Ok(EnvPtr {
-			ptr: env_ptr,
-			logger: None,
-			tp_options: Some(tp_options)
-		})
+	pub fn set_language_projection(&self, projection: LanguageProjection) -> Result<()> {
+		onnx_call!(Api::get_ptr(), SetLanguageProjection(self.ptr, projection.into()))
 	}
-
-	/// Create an allocator and register it with the OrtEnv.
-	pub fn env_create_and_register_allocator(&self, env: &mut EnvPtr, mem: &MemoryInfoPtr, arena: &ArenaConfigPtr) -> Result<()> {
-		onnx_call!(self.api, CreateAndRegisterAllocator(env.ptr, mem.ptr, arena.ptr))
-	}
-
-	pub fn env_set_language_projection(&self, env: &EnvPtr, projection: LanguageProjection) -> Result<()> {
-		onnx_call!(self.api, SetLanguageProjection(env.ptr, projection.into()))
-	}
-
-	/// Create a new OrtEnv with logger and threadpool
-	pub fn env_create_with_custom_logger_and_global_thread_pools<T: Logger + 'static>(
-		&self,
-		logger: T,
-		log_severity_level: LogLevel,
-		logid: impl Into<Vec<u8>>,
-		tp_options: ThreadingOptions
-	) -> Result<EnvPtr> {
-		let logid = CString::new(logid).expect("invalid log identifier");
-		let mut env_ptr: *mut OrtEnv = std::ptr::null_mut();
-
-		// let param = LoggerHandle::for_logger(logger);
-		let logger = LoggerPtr::for_logger(logger);
-
-		onnx_call!(
-			self.api,
-			CreateEnvWithCustomLoggerAndGlobalThreadPools(logger.log, logger.ptr, log_severity_level.into(), logid.as_ptr(), tp_options.as_ptr(), &mut env_ptr)
-		)?;
-
-		Ok(EnvPtr {
-			ptr: env_ptr,
-			logger: Some(logger),
-			tp_options: Some(tp_options)
-		})
-	}
-
-	/// Create an allocation for ThreadingOptions
-	pub fn env_create_threading_options(&self) -> Result<ThreadingOptions> {
-		let mut ptr: *mut OrtThreadingOptions = std::ptr::null_mut();
-
-		onnx_call!(self.api, CreateThreadingOptions(&mut ptr))?;
-
-		Ok(ThreadingOptions { ptr })
-	}
-
-	/// Release the allocation for ThreadingOptions
-	pub(crate) fn env_release_threading_options(&self, value: &mut ThreadingOptions) {
-		if !value.ptr.is_null() {
-			onnx_call!(self.api, ReleaseThreadingOptions(value.ptr) -> ()).expect("unable to release ThreadingOptions");
-			value.ptr = std::ptr::null_mut();
-		}
-	}
-
-	/// Set global intra-op thread count.
-	pub fn env_set_global_intra_op_num_threads(&self, tp: ThreadingOptions, num: i32) -> Result<()> {
-		onnx_call!(self.api, SetGlobalIntraOpNumThreads(tp.ptr, num))
-	}
-
-	/// Set global inter-op thread count.
-	pub fn env_set_global_inter_op_num_threads(&self, tp: ThreadingOptions, num: i32) -> Result<()> {
-		onnx_call!(self.api, SetGlobalInterOpNumThreads(tp.ptr, num))
-	}
-
-	/// Set global spin control options.
-	pub fn env_set_global_spin_control(&self, tp: ThreadingOptions, setting: SpinControl) -> Result<()> {
-		onnx_call!(self.api, SetGlobalSpinControl(tp.ptr, setting.into()))
-	}
-
-	/// Set threading flush-to-zero and denormal-as-zero
-	pub fn env_set_global_denormal_as_zero(&self, tp: ThreadingOptions) -> Result<()> {
-		onnx_call!(self.api, SetGlobalDenormalAsZero(tp.ptr))
-	}
-
-	pub fn env_set_global_intra_op_thread_affinity(&self, tp: ThreadingOptions, affinity: impl Into<Vec<u8>>) -> Result<()> {
-		let affinity = CString::new(affinity).expect("invalid affinity string");
-
-		onnx_call!(self.api, SetGlobalIntraOpThreadAffinity(tp.ptr, affinity.as_ptr()))
-	}
-
-	// Not yet impl
-	// SetGlobalCustomCreateThreadFn
-	// SetGlobalCustomThreadCreationOptions
-	// SetGlobalCustomJoinThreadFn
 }
 
-#[derive(Debug)]
-pub struct EnvPtr {
-	ptr: *mut OrtEnv,
-	logger: Option<LoggerPtr>,
-	tp_options: Option<ThreadingOptions>
-}
-
-unsafe impl Send for EnvPtr {}
-unsafe impl Sync for EnvPtr {}
-
-impl Drop for EnvPtr {
+impl Drop for Env {
 	fn drop(&mut self) {
-		Api::get().env_release(self);
+		if !self.ptr.is_null() {
+			onnx_call!(Api::get_ptr(), ReleaseEnv(self.ptr) -> ()).expect("unable to release OrtEnv");
+			self.ptr = std::ptr::null_mut();
+		}
 	}
 }
 
@@ -182,11 +82,53 @@ impl ThreadingOptions {
 	fn as_ptr(&self) -> *const OrtThreadingOptions {
 		todo!()
 	}
+
+	pub fn create() -> Result<ThreadingOptions> {
+		let mut ptr: *mut OrtThreadingOptions = std::ptr::null_mut();
+
+		onnx_call!(Api::get_ptr(), CreateThreadingOptions(&mut ptr))?;
+
+		Ok(ThreadingOptions { ptr })
+	}
+
+	/// Set global intra-op thread count.
+	pub fn set_global_intra_op_num_threads(self, num: i32) -> Result<Self> {
+		onnx_call!(Api::get_ptr(), SetGlobalIntraOpNumThreads(self.ptr, num))?;
+		Ok(self)
+	}
+
+	/// Set global inter-op thread count.
+	pub fn set_global_inter_op_num_threads(self, num: i32) -> Result<Self> {
+		onnx_call!(Api::get_ptr(), SetGlobalInterOpNumThreads(self.ptr, num))?;
+		Ok(self)
+	}
+
+	/// Set global spin control options.
+	pub fn set_global_spin_control(self, setting: SpinControl) -> Result<Self> {
+		onnx_call!(Api::get_ptr(), SetGlobalSpinControl(self.ptr, setting.into()))?;
+		Ok(self)
+	}
+
+	/// Set threading flush-to-zero and denormal-as-zero
+	pub fn set_global_denormal_as_zero(self) -> Result<Self> {
+		onnx_call!(Api::get_ptr(), SetGlobalDenormalAsZero(self.ptr))?;
+		Ok(self)
+	}
+
+	pub fn set_global_intra_op_thread_affinity(self, affinity: impl Into<Vec<u8>>) -> Result<Self> {
+		let affinity = CString::new(affinity).expect("invalid affinity string");
+
+		onnx_call!(Api::get_ptr(), SetGlobalIntraOpThreadAffinity(self.ptr, affinity.as_ptr()))?;
+		Ok(self)
+	}
 }
 
 impl Drop for ThreadingOptions {
 	fn drop(&mut self) {
-		Api::get().env_release_threading_options(self);
+		if !self.ptr.is_null() {
+			onnx_call!(Api::get_ptr(), ReleaseThreadingOptions(self.ptr) -> ()).expect("unable to release ThreadingOptions");
+			self.ptr = std::ptr::null_mut();
+		}
 	}
 }
 

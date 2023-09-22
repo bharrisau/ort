@@ -8,6 +8,7 @@ mod error;
 mod sys;
 
 mod api;
+mod callback;
 mod logger;
 mod status;
 mod string;

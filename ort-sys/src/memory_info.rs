@@ -38,11 +38,11 @@ impl Api {
 }
 
 #[repr(transparent)]
-pub struct MemoryInfoPtr {
+pub struct MemoryInfo {
 	pub(crate) ptr: *mut OrtMemoryInfo
 }
 
 #[repr(transparent)]
-pub struct ArenaConfigPtr {
+pub struct ArenaConfig {
 	pub(crate) ptr: *mut OrtArenaCfg
 }

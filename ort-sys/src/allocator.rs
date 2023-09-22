@@ -1,4 +1,8 @@
-use std::{ffi::c_void, ops::Deref};
+use std::{
+	ffi::c_void,
+	ops::Deref,
+	sync::{Arc, Mutex}
+};
 
 use crate::{ctypes::size_t, onnx_call, sys::OrtAllocator, Api, Result};
 
@@ -74,14 +78,28 @@ impl Api {}
 // OrtStatus * 	UnregisterAllocator (OrtEnv *env, const OrtMemoryInfo *mem_info)
 //  	Unregister a custom allocator.
 
-#[repr(transparent)]
-pub struct AllocatorPtr {
-	pub(crate) ptr: *mut OrtAllocator
+pub struct Allocator {
+	inner: Arc<Mutex<AllocatorInner>>
 }
 
-impl AllocatorPtr {
+#[repr(transparent)]
+pub struct AllocatorInner {
+	ptr: *mut OrtAllocator
+}
+
+impl Allocator {
 	pub fn free<T>(&self, value: *const T) {
 		todo!()
+	}
+
+	pub fn with_ptr<T>(&self, f: impl FnOnce(*mut OrtAllocator) -> T) -> T {
+		let inner = self.inner.lock().unwrap();
+		f(inner.ptr)
+	}
+
+	pub fn as_ptr(&self) -> *const OrtAllocator {
+		let inner = self.inner.lock().unwrap();
+		inner.ptr
 	}
 
 	#[allow(clippy::useless_conversion)]
@@ -95,7 +113,7 @@ impl AllocatorPtr {
 	}
 }
 
-impl Drop for AllocatorPtr {
+impl Drop for Allocator {
 	fn drop(&mut self) {
 		// Api::get().allocator_release(self)
 	}
@@ -104,6 +122,12 @@ impl Drop for AllocatorPtr {
 pub struct AllocatorValue<T> {
 	value: T,
 	alloc: *mut c_void
+}
+
+impl<T> AllocatorValue<T> {
+	pub(crate) fn create(value: T, allocator: Allocator, allocation: *const c_void) -> Self {
+		todo!()
+	}
 }
 
 impl<T> Deref for AllocatorValue<T> {
